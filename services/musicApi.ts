@@ -2,20 +2,31 @@
 import { Track, LyricLine, Comment } from '../types';
 
 // Use a rotating set of public APIs to improve stability
-// These are public Vercel deployments of the NeteaseCloudMusicApi
 const API_BASES = [
   'https://netease-cloud-music-api-anon.vercel.app', 
-  'https://netease-cloud-music-api-psi-nine.vercel.app'
+  'https://netease-cloud-music-api-psi-nine.vercel.app',
+  'https://music-api.heheda.top',
+  'https://netease.blobs.uk',
+  'https://api.music.areschang.top'
 ];
 
+// Helper to try multiple endpoints
 const fetchWithFailover = async (path: string): Promise<any> => {
-  for (const base of API_BASES) {
+  const validBases = API_BASES.filter(b => !b.includes('music.163.com/api')); 
+
+  for (const base of validBases) {
     try {
-      const res = await fetch(`${base}${path}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000); 
+
+      const res = await fetch(`${base}${path}`, { 
+        signal: controller.signal 
+      });
+      clearTimeout(timeoutId);
+
       if (!res.ok) throw new Error(`Status ${res.status}`);
       return await res.json();
     } catch (e) {
-      console.warn(`API ${base} failed for ${path}, trying next...`);
       continue;
     }
   }
@@ -33,31 +44,19 @@ export const fetchPlaylist = async (id: string): Promise<Track[]> => {
 };
 
 export const getAudioUrl = async (id: number): Promise<string> => {
-  try {
-    // 1. Try to get the official URL from the API
-    // Requesting 'standard' quality often bypasses some VIP restrictions compared to 'lossless'
-    const data = await fetchWithFailover(`/song/url?id=${id}&level=standard`);
-    const apiResult = data.data?.[0]?.url;
-    
-    if (apiResult) {
-        // Ensure https to avoid mixed content errors
-        return apiResult.replace('http://', 'https://');
-    }
-  } catch (e) {
-    console.warn("API url fetch failed, using fallback", e);
-  }
-
-  // 2. Fallback to direct outer link if API fails or returns null
-  // This link redirects to the actual mp3. The no-referrer meta tag in index.html is crucial here.
-  return `https://music.163.com/song/media/outer/url?id=${id}.mp3`;
+  // Strategy: Use the official Netease "outer" link chain.
+  // This is a 302 redirect. Browsers can handle this if strict crossOrigin checks are disabled on the audio tag.
+  // We append a random timestamp to prevent the browser from caching a previous 404/403 response.
+  return `https://music.163.com/song/media/outer/url?id=${id}.mp3&t=${Date.now()}`;
 };
 
-// Deprecated: kept for compatibility if needed, but getAudioUrl is preferred
+// Deprecated
 export const fetchSongUrl = (id: number): string => {
   return `https://music.163.com/song/media/outer/url?id=${id}.mp3`;
 };
 
 const parseLrc = (lrc: string): { time: number; text: string }[] => {
+  if (!lrc) return [];
   const lines = lrc.split('\n');
   const result: { time: number; text: string }[] = [];
   const timeExp = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
@@ -89,9 +88,8 @@ export const fetchLyrics = async (id: number): Promise<LyricLine[]> => {
     return original.map((line, index) => {
       // Calculate duration based on next line's time
       const nextLine = original[index + 1];
-      // Default 5s for last line. 
-      // Ensure min duration is 400ms to avoid instant flashing on bad timestamps.
       const rawDuration = nextLine ? nextLine.time - line.time : 5000;
+      // Min duration 400ms to prevent visual glitching
       const duration = Math.max(400, rawDuration); 
 
       // Find matching translation (rough match within 500ms)

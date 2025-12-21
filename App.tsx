@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments } from './services/musicApi';
 import { Track, LyricLine, Comment } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
-import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc } from 'lucide-react';
+import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle } from 'lucide-react';
 
 const DEFAULT_PLAYLIST_ID = '833444858'; 
 
@@ -16,9 +16,10 @@ const App: React.FC = () => {
   
   // Player State
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0); // This will now be updated smoothly via RAF
+  const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.5);
+  const [playError, setPlayError] = useState<string | null>(null);
   
   // View State
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
@@ -30,7 +31,7 @@ const App: React.FC = () => {
   const [showComments, setShowComments] = useState(false);
   
   // Error handling
-  const [errorCount, setErrorCount] = useState(0);
+  const [consecutiveErrors, setConsecutiveErrors] = useState(0);
 
   // Refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -42,17 +43,20 @@ const App: React.FC = () => {
   // --- Load Playlist ---
   const loadPlaylistData = async (id: string) => {
     setIsLoading(true);
+    setPlayError(null);
     try {
       const tracks = await fetchPlaylist(id);
       if (tracks.length > 0) {
         setPlaylist(tracks);
         setCurrentIndex(0);
         setIsPlaying(false);
+        setConsecutiveErrors(0);
       } else {
-        alert("Could not load playlist. Check the ID.");
+        setPlayError("Could not load playlist. Check ID or network.");
       }
     } catch (e) {
       console.error("Init failed", e);
+      setPlayError("Network error loading playlist.");
     } finally {
       setIsLoading(false);
     }
@@ -76,7 +80,7 @@ const App: React.FC = () => {
 
   // --- Track Change Logic ---
   useEffect(() => {
-    if (!currentTrack || !audioRef.current) return;
+    if (!currentTrack) return;
 
     let isMounted = true;
     loadingTrackRef.current = currentTrack.id;
@@ -84,17 +88,34 @@ const App: React.FC = () => {
     const loadTrack = async () => {
         setLyrics([]);
         setComments([]);
+        setPlayError(null);
 
         // 1. Audio
         try {
             const url = await getAudioUrl(currentTrack.id);
             if (!isMounted || loadingTrackRef.current !== currentTrack.id) return;
 
+            // Note: We don't set audioRef.src here anymore because we are using the key prop 
+            // on the audio element to force a complete remount with the new URL.
+            // However, we still fetch the URL to check if it's valid if we wanted to pre-validate.
+            // For now, we pass the URL directly to the audio element.
+            
             if (audioRef.current) {
                 audioRef.current.src = url;
                 audioRef.current.load();
+                
                 if (isPlaying) {
-                    audioRef.current.play().catch(e => handlePlayError(e));
+                   const playPromise = audioRef.current.play();
+                   if (playPromise !== undefined) {
+                     playPromise.catch(e => {
+                       console.warn("Auto-play prevented or failed:", e);
+                       if (e.name !== 'NotAllowedError') {
+                         handlePlayError(e); 
+                       } else {
+                         setIsPlaying(false);
+                       }
+                     });
+                   }
                 }
             }
         } catch (e) {
@@ -122,7 +143,6 @@ const App: React.FC = () => {
             if(ctx) {
                 ctx.drawImage(img, 0, 0, 1, 1);
                 const [r,g,b] = ctx.getImageData(0,0,1,1).data;
-                // Darken the color slightly for better text contrast if needed, or keep vibrant
                 setDominantColor(`${r},${g},${b}`);
             }
         }
@@ -132,7 +152,7 @@ const App: React.FC = () => {
     return () => { isMounted = false; };
   }, [currentTrack]); 
 
-  // --- Smooth Timer Loop (Replaces basic onTimeUpdate) ---
+  // --- Smooth Timer Loop ---
   useEffect(() => {
       const loop = () => {
           if (audioRef.current && !audioRef.current.paused) {
@@ -152,7 +172,6 @@ const App: React.FC = () => {
       };
   }, [isPlaying]);
 
-  // Handle duration updates separately to avoid re-renders
   const handleDurationChange = () => {
       if (audioRef.current) {
           setDuration(audioRef.current.duration * 1000 || 0);
@@ -160,29 +179,28 @@ const App: React.FC = () => {
   };
 
   const handleEnded = () => {
-      setErrorCount(0);
+      setConsecutiveErrors(0);
       playNext();
   };
 
   const handlePlayError = (error: any) => {
-     const msg = error instanceof Error ? error.message : String(error);
-     if (msg.includes("no supported sources") || msg.includes("format is not supported")) {
-         if (playlist.length > 0 && errorCount < 3) {
-             setErrorCount(prev => prev + 1);
-             setTimeout(() => playNext(), 500);
-         } else {
-             setIsPlaying(false);
-         }
+     // Increased tolerance to 10 because playlists often have blocks of VIP songs
+     if (consecutiveErrors >= 10) {
+         setIsPlaying(false);
+         setPlayError("Too many unplayable tracks. Playlist may be VIP-only.");
+         return;
      }
+
+     console.warn("Playback error, skipping...", error);
+     setConsecutiveErrors(prev => prev + 1);
+     // Fast skip
+     setTimeout(() => playNext(), 500);
   };
 
   const handleAudioError = (e: React.SyntheticEvent<HTMLAudioElement, Event>) => {
-      if (playlist.length > 0 && errorCount < 3) {
-          setErrorCount(prev => prev + 1);
-          setTimeout(() => playNext(), 500);
-      } else {
-          setIsPlaying(false);
-      }
+      const target = e.target as HTMLAudioElement;
+      console.warn("Audio Error Event:", target.error);
+      handlePlayError("Audio source failed to load");
   };
 
   const playNext = () => {
@@ -193,21 +211,31 @@ const App: React.FC = () => {
   const playPrev = () => {
       if (playlist.length === 0) return;
       setCurrentIndex((prev) => (prev - 1 + playlist.length) % playlist.length);
-      setErrorCount(0);
+      setConsecutiveErrors(0);
   };
 
   const togglePlay = async () => {
       if (!audioRef.current || !currentTrack) return;
+      
       if (isPlaying) {
           audioRef.current.pause();
           setIsPlaying(false);
       } else {
           try {
+              // Ensure audio context is ready (sometimes needed for browsers)
               await audioRef.current.play();
               setIsPlaying(true);
-              setErrorCount(0);
+              setConsecutiveErrors(0);
+              setPlayError(null);
           } catch (e) {
-              handlePlayError(e);
+              console.error("Manual play failed", e);
+              if (e instanceof Error && e.name === 'NotAllowedError') {
+                  // User interaction required, but we are in a click handler...
+              } else {
+                 // Try to force load again
+                 audioRef.current.load();
+                 audioRef.current.play().catch(() => playNext());
+              }
           }
       }
   };
@@ -244,12 +272,18 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-screen flex flex-col relative overflow-hidden font-sans select-none bg-black">
+      {/* 
+        Key prop forces re-creation of audio element on track change.
+        This is crucial for fixing "stuck" audio states in some browsers.
+      */}
       <audio 
+        key={currentTrack?.id}
         ref={audioRef}
-        crossOrigin="anonymous"
+        // No crossOrigin to allow opaque redirects (Netease Outer Link)
         onDurationChange={handleDurationChange}
         onEnded={handleEnded}
         onError={handleAudioError}
+        preload="auto"
       />
 
       {/* --- Dynamic Apple-Style Background --- */}
@@ -261,6 +295,13 @@ const App: React.FC = () => {
         }}
       />
       <div className="absolute inset-0 -z-10 bg-black/40 backdrop-blur-[120px]" />
+
+      {/* --- Error Toast --- */}
+      {playError && (
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2 animate-bounce">
+              <AlertCircle className="w-4 h-4" /> {playError}
+          </div>
+      )}
       
       {/* --- Main Content Layout --- */}
       <div className="flex-1 flex flex-col lg:flex-row relative z-10 overflow-hidden min-h-0">
@@ -290,27 +331,21 @@ const App: React.FC = () => {
                     const isActive = i === activeIndex;
                     const distance = Math.abs(activeIndex - i);
                     
-                    // Style calculation for Blur Falloff
                     let styleClass = "";
                     let fillStyle = {};
 
                     if (isActive) {
                         styleClass = "scale-100 blur-0 font-extrabold text-3xl lg:text-5xl drop-shadow-md";
                         
-                        // Karaoke Gradient Calculation
                         const lineElapsed = currentTime - line.time;
                         const durationSafe = line.duration || 1000;
-                        
-                        // We use a "softened" linear fill to avoid the "rushed" feeling on short lines.
-                        // By giving the gradient a 10% soft edge, it looks smoother.
                         const progress = Math.min(100, Math.max(0, (lineElapsed / durationSafe) * 100));
                         
-                        // Apple Music Style: Filled white vs Transparent white
                         fillStyle = {
                             backgroundImage: `linear-gradient(to right, white ${Math.max(0, progress - 10)}%, rgba(255,255,255,0.3) ${Math.min(100, progress + 10)}%)`,
                             WebkitBackgroundClip: 'text',
                             backgroundClip: 'text',
-                            color: 'rgba(255,255,255,0.3)', // Fallback color visible if clip fails, or initial state
+                            color: 'rgba(255,255,255,0.3)',
                             WebkitTextFillColor: 'transparent'
                         };
 
@@ -359,7 +394,6 @@ const App: React.FC = () => {
                     <button onClick={() => setShowQueue(false)} className="p-2 hover:bg-white/10 rounded-full"><X className="w-5 h-5" /></button>
                 </div>
                 
-                {/* Playlist ID Input */}
                 <form onSubmit={handlePlaylistSubmit} className="mb-6">
                     <label className="text-xs text-white/50 mb-1 block pl-1">Load Custom Playlist ID</label>
                     <div className="relative">
