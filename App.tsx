@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments } from './services/musicApi';
 import { Track, LyricLine, Comment } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
+import { APP_VERSION } from './constants';
 import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle } from 'lucide-react';
 
 const DEFAULT_PLAYLIST_ID = '833444858'; 
@@ -14,11 +15,20 @@ const App: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   
+  // UI State for Playlist Input
+  const [tempPlaylistId, setTempPlaylistId] = useState(DEFAULT_PLAYLIST_ID);
+  
   // Player State
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.5);
+  
+  // Volume with Persistence
+  const [volume, setVolume] = useState(() => {
+      const saved = localStorage.getItem('vinyl_volume');
+      return saved !== null ? parseFloat(saved) : 0.5;
+  });
+
   const [playError, setPlayError] = useState<string | null>(null);
   
   // View State
@@ -37,7 +47,6 @@ const App: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const loadingTrackRef = useRef<number | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
 
   // --- Load Playlist ---
@@ -51,12 +60,13 @@ const App: React.FC = () => {
         setCurrentIndex(0);
         setIsPlaying(false);
         setConsecutiveErrors(0);
+        setPlaylistId(id); // Confirm ID only on success
       } else {
-        setPlayError("无法加载歌单，请检查ID是否正确");
+        setPlayError("无法加载歌单，ID无效或歌单为空");
       }
     } catch (e) {
       console.error("Init failed", e);
-      setPlayError("网络连接失败，请稍后重试");
+      setPlayError("网络连接失败，请检查网络或代理");
     } finally {
       setIsLoading(false);
     }
@@ -66,16 +76,38 @@ const App: React.FC = () => {
     loadPlaylistData(playlistId);
   }, []); // Run once on mount
 
+  const extractIdFromInput = (input: string): string | null => {
+      const clean = input.trim();
+      // 1. Check for 'id=' param (most common in share links)
+      const idParamMatch = clean.match(/[?&]id=(\d+)/);
+      if (idParamMatch) return idParamMatch[1];
+
+      // 2. Check for path param like /playlist/12345
+      const pathMatch = clean.match(/\/playlist\/(\d+)/);
+      if (pathMatch) return pathMatch[1];
+
+      // 3. Check if it's just numbers
+      if (/^\d+$/.test(clean)) return clean;
+
+      return null;
+  };
+
   const handlePlaylistSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputRef.current && inputRef.current.value) {
-        const newId = inputRef.current.value.trim();
-        if (newId === playlistId) return; // Don't reload if same ID
+    if (tempPlaylistId) {
+        const extractedId = extractIdFromInput(tempPlaylistId);
         
-        setPlaylistId(newId);
-        loadPlaylistData(newId);
-        // We keep the queue open momentarily or close it? 
-        // Since loadPlaylistData triggers full screen loading, closing it is fine.
+        if (!extractedId) {
+            setPlayError("无效的歌单链接或ID");
+            return;
+        }
+
+        // Auto-format the input to the clean ID for user clarity
+        setTempPlaylistId(extractedId);
+
+        if (extractedId === playlistId) return; 
+        
+        loadPlaylistData(extractedId);
         setShowQueue(false);
     }
   };
@@ -99,20 +131,16 @@ const App: React.FC = () => {
             const url = await getAudioUrl(currentTrack.id);
             if (!isMounted || loadingTrackRef.current !== currentTrack.id) return;
 
-            // Note: We don't set audioRef.src here anymore because we are using the key prop 
-            // on the audio element to force a complete remount with the new URL.
-            // However, we still fetch the URL to check if it's valid if we wanted to pre-validate.
-            // For now, we pass the URL directly to the audio element.
-            
             if (audioRef.current) {
                 audioRef.current.src = url;
+                audioRef.current.volume = volume; 
                 audioRef.current.load();
                 
                 if (isPlaying) {
                    const playPromise = audioRef.current.play();
                    if (playPromise !== undefined) {
                      playPromise.catch(e => {
-                       console.warn("Auto-play prevented or failed:", e);
+                       console.warn("Auto-play prevented/failed:", e);
                        if (e.name !== 'NotAllowedError') {
                          handlePlayError(e); 
                        } else {
@@ -188,7 +216,6 @@ const App: React.FC = () => {
   };
 
   const handlePlayError = (error: any) => {
-     // Increased tolerance to 10 because playlists often have blocks of VIP songs
      if (consecutiveErrors >= 10) {
          setIsPlaying(false);
          setPlayError("连续多首歌曲无法播放，可能为VIP专享或版权限制");
@@ -197,7 +224,6 @@ const App: React.FC = () => {
 
      console.warn("Playback error, skipping...", error);
      setConsecutiveErrors(prev => prev + 1);
-     // Fast skip
      setTimeout(() => playNext(), 500);
   };
 
@@ -226,7 +252,6 @@ const App: React.FC = () => {
           setIsPlaying(false);
       } else {
           try {
-              // Ensure audio context is ready (sometimes needed for browsers)
               await audioRef.current.play();
               setIsPlaying(true);
               setConsecutiveErrors(0);
@@ -234,9 +259,8 @@ const App: React.FC = () => {
           } catch (e) {
               console.error("Manual play failed", e);
               if (e instanceof Error && e.name === 'NotAllowedError') {
-                  // User interaction required, but we are in a click handler...
+                  // Interaction required
               } else {
-                 // Try to force load again
                  audioRef.current.load();
                  audioRef.current.play().catch(() => playNext());
               }
@@ -254,8 +278,12 @@ const App: React.FC = () => {
       }
   };
 
+  // --- Volume Sync Effect ---
   useEffect(() => {
-      if (audioRef.current) audioRef.current.volume = volume;
+      if (audioRef.current) {
+          audioRef.current.volume = volume;
+      }
+      localStorage.setItem('vinyl_volume', volume.toString());
   }, [volume]);
 
   // --- Auto-Scroll Lyrics ---
@@ -276,14 +304,9 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-screen flex flex-col relative overflow-hidden font-sans select-none bg-black">
-      {/* 
-        Key prop forces re-creation of audio element on track change.
-        This is crucial for fixing "stuck" audio states in some browsers.
-      */}
       <audio 
         key={currentTrack?.id}
         ref={audioRef}
-        // No crossOrigin to allow opaque redirects (Netease Outer Link)
         onDurationChange={handleDurationChange}
         onEnded={handleEnded}
         onError={handleAudioError}
@@ -300,6 +323,12 @@ const App: React.FC = () => {
       />
       <div className="absolute inset-0 -z-10 bg-black/40 backdrop-blur-[120px]" />
 
+      {/* --- Version Watermark (Bottom Right) --- */}
+      {/* Increased opacity and z-index for better visibility */}
+      <div className="fixed bottom-3 right-4 z-[100] text-[10px] text-white/50 font-mono pointer-events-none select-none tracking-widest">
+         v{APP_VERSION}
+      </div>
+
       {/* --- Error Toast --- */}
       {playError && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2 animate-bounce">
@@ -310,10 +339,9 @@ const App: React.FC = () => {
       {/* --- Main Content Layout --- */}
       <div className="flex-1 flex flex-col lg:flex-row relative z-10 overflow-hidden min-h-0">
         
-        {/* Left Side: Album Art (Apple Music Style - Sticky Center) */}
+        {/* Left Side: Album Art */}
         <div className="flex-1 flex items-center justify-center p-8 lg:p-12 transition-all duration-500 relative min-h-0 min-w-0">
             <div className={`relative aspect-square w-full max-w-[280px] lg:max-w-[550px] transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isPlaying ? 'scale-100' : 'scale-[0.8]'}`}>
-                {/* Colored Glow Behind Art */}
                 <div 
                     className="absolute inset-0 rounded-xl blur-3xl opacity-60 scale-110 -z-10 transition-colors duration-[2000ms]" 
                     style={{ background: `rgb(${dominantColor})` }}
@@ -325,7 +353,7 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Right Side: Lyrics (Apple Music Style - Blur Falloff + Karaoke Fill) */}
+        {/* Right Side: Lyrics */}
         <div className="flex-1 h-full relative overflow-hidden lg:mr-8 flex flex-col min-h-0">
             <div 
                 ref={lyricsContainerRef}
@@ -340,7 +368,6 @@ const App: React.FC = () => {
 
                     if (isActive) {
                         styleClass = "scale-100 blur-0 font-extrabold text-3xl lg:text-5xl drop-shadow-md";
-                        
                         const lineElapsed = currentTime - line.time;
                         const durationSafe = line.duration || 1000;
                         const progress = Math.min(100, Math.max(0, (lineElapsed / durationSafe) * 100));
@@ -352,7 +379,6 @@ const App: React.FC = () => {
                             color: 'rgba(255,255,255,0.3)',
                             WebkitTextFillColor: 'transparent'
                         };
-
                     } else if (distance === 1) {
                         styleClass = "opacity-60 scale-[0.98] blur-[1px] text-white/90 font-bold text-2xl lg:text-4xl";
                     } else if (distance === 2) {
@@ -390,7 +416,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* --- Queue Sidebar (Slide Over) --- */}
+      {/* --- Queue Sidebar --- */}
       <div className={`fixed inset-y-0 left-0 w-80 bg-neutral-900/95 backdrop-blur-2xl border-r border-white/5 shadow-2xl z-40 transform transition-transform duration-300 ease-spring ${showQueue ? 'translate-x-0' : '-translate-x-full'}`}>
             <div className="p-6 pt-12 flex flex-col h-full">
                 <div className="flex items-center justify-between mb-6">
@@ -399,12 +425,12 @@ const App: React.FC = () => {
                 </div>
                 
                 <form onSubmit={handlePlaylistSubmit} className="mb-6">
-                    <label className="text-xs text-white/50 mb-1 block pl-1">切换歌单 (支持网易云歌单ID)</label>
+                    <label className="text-xs text-white/50 mb-1 block pl-1">切换歌单 (支持网易云歌单ID或链接)</label>
                     <div className="relative">
                         <input 
-                            ref={inputRef}
-                            defaultValue={playlistId}
-                            placeholder="输入歌单 ID..."
+                            value={tempPlaylistId}
+                            onChange={(e) => setTempPlaylistId(e.target.value)}
+                            placeholder="输入歌单 ID 或 粘贴链接..."
                             className="w-full bg-white/10 border border-white/10 rounded-lg py-2 pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/30 focus:bg-white/20 transition-colors"
                         />
                         <Search className="w-4 h-4 text-white/40 absolute left-3 top-2.5" />
@@ -414,7 +440,7 @@ const App: React.FC = () => {
                     </button>
                 </form>
 
-                <div className="flex-1 overflow-y-auto no-scrollbar space-y-1">
+                <div className="flex-1 overflow-y-auto no-scrollbar space-y-1 pb-20">
                     {playlist.map((track, i) => (
                         <div 
                             key={track.id} 
@@ -433,7 +459,7 @@ const App: React.FC = () => {
             </div>
       </div>
 
-      {/* --- Comments Drawer (Right Side) --- */}
+      {/* --- Comments Drawer --- */}
       <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] bg-neutral-900/80 backdrop-blur-3xl border-l border-white/10 shadow-2xl z-40 transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showComments ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex flex-col h-full">
                 <div className="p-6 pt-8 border-b border-white/5 flex items-center justify-between">
