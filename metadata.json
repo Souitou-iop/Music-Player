@@ -1,0 +1,5 @@
+{
+  "name": "Music Player",
+  "description": "An immersive, Apple Music-style web player for Netease Cloud Music playlists.",
+  "requestFramePermissions": []
+}
