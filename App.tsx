@@ -52,11 +52,11 @@ const App: React.FC = () => {
         setIsPlaying(false);
         setConsecutiveErrors(0);
       } else {
-        setPlayError("Could not load playlist. Check ID or network.");
+        setPlayError("无法加载歌单，请检查ID是否正确");
       }
     } catch (e) {
       console.error("Init failed", e);
-      setPlayError("Network error loading playlist.");
+      setPlayError("网络连接失败，请稍后重试");
     } finally {
       setIsLoading(false);
     }
@@ -70,8 +70,12 @@ const App: React.FC = () => {
     e.preventDefault();
     if (inputRef.current && inputRef.current.value) {
         const newId = inputRef.current.value.trim();
+        if (newId === playlistId) return; // Don't reload if same ID
+        
         setPlaylistId(newId);
         loadPlaylistData(newId);
+        // We keep the queue open momentarily or close it? 
+        // Since loadPlaylistData triggers full screen loading, closing it is fine.
         setShowQueue(false);
     }
   };
@@ -187,7 +191,7 @@ const App: React.FC = () => {
      // Increased tolerance to 10 because playlists often have blocks of VIP songs
      if (consecutiveErrors >= 10) {
          setIsPlaying(false);
-         setPlayError("Too many unplayable tracks. Playlist may be VIP-only.");
+         setPlayError("连续多首歌曲无法播放，可能为VIP专享或版权限制");
          return;
      }
 
@@ -200,7 +204,7 @@ const App: React.FC = () => {
   const handleAudioError = (e: React.SyntheticEvent<HTMLAudioElement, Event>) => {
       const target = e.target as HTMLAudioElement;
       console.warn("Audio Error Event:", target.error);
-      handlePlayError("Audio source failed to load");
+      handlePlayError("音频加载失败");
   };
 
   const playNext = () => {
@@ -368,8 +372,8 @@ const App: React.FC = () => {
                             <p className="leading-tight tracking-tight" style={fillStyle}>
                                 {line.text}
                             </p>
-                            {line.trans && isActive && (
-                                <p className="text-xl lg:text-2xl font-medium mt-2 text-white/60 blur-0">
+                            {line.trans && (
+                                <p className="text-[0.55em] font-normal mt-1.5 opacity-70">
                                     {line.trans}
                                 </p>
                             )}
@@ -378,7 +382,7 @@ const App: React.FC = () => {
                 }) : (
                     <div className="flex items-center justify-center h-full">
                         <span className="text-white/30 text-2xl font-bold flex items-center gap-3 animate-pulse">
-                            <Disc className="animate-spin-slow" /> Instrumental / No Lyrics
+                            <Disc className="animate-spin-slow" /> 纯音乐 / 暂无歌词
                         </span>
                     </div>
                 )}
@@ -390,23 +394,23 @@ const App: React.FC = () => {
       <div className={`fixed inset-y-0 left-0 w-80 bg-neutral-900/95 backdrop-blur-2xl border-r border-white/5 shadow-2xl z-40 transform transition-transform duration-300 ease-spring ${showQueue ? 'translate-x-0' : '-translate-x-full'}`}>
             <div className="p-6 pt-12 flex flex-col h-full">
                 <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-bold flex items-center gap-2"><ListMusic /> Queue</h2>
+                    <h2 className="text-xl font-bold flex items-center gap-2"><ListMusic /> 播放列表</h2>
                     <button onClick={() => setShowQueue(false)} className="p-2 hover:bg-white/10 rounded-full"><X className="w-5 h-5" /></button>
                 </div>
                 
                 <form onSubmit={handlePlaylistSubmit} className="mb-6">
-                    <label className="text-xs text-white/50 mb-1 block pl-1">Load Custom Playlist ID</label>
+                    <label className="text-xs text-white/50 mb-1 block pl-1">切换歌单 (支持网易云歌单ID)</label>
                     <div className="relative">
                         <input 
                             ref={inputRef}
                             defaultValue={playlistId}
-                            placeholder="Playlist ID..."
+                            placeholder="输入歌单 ID..."
                             className="w-full bg-white/10 border border-white/10 rounded-lg py-2 pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/30 focus:bg-white/20 transition-colors"
                         />
                         <Search className="w-4 h-4 text-white/40 absolute left-3 top-2.5" />
                     </div>
                     <button type="submit" className="w-full mt-2 bg-white text-black font-bold py-2 rounded-lg text-xs hover:bg-neutral-200 transition-colors">
-                        Load
+                        加载歌单
                     </button>
                 </form>
 
@@ -433,7 +437,7 @@ const App: React.FC = () => {
       <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] bg-neutral-900/80 backdrop-blur-3xl border-l border-white/10 shadow-2xl z-40 transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showComments ? 'translate-x-0' : 'translate-x-full'}`}>
             <div className="flex flex-col h-full">
                 <div className="p-6 pt-8 border-b border-white/5 flex items-center justify-between">
-                    <h2 className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5" /> Comments</h2>
+                    <h2 className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5" /> 精选评论</h2>
                     <button onClick={() => setShowComments(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/20 transition-colors"><X className="w-4 h-4" /></button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -452,7 +456,7 @@ const App: React.FC = () => {
                             </div>
                         </div>
                     )) : (
-                        <div className="text-center text-white/30 mt-20">No comments available</div>
+                        <div className="text-center text-white/30 mt-20">暂无评论</div>
                     )}
                 </div>
             </div>
