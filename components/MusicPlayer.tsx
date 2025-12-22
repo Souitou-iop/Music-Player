@@ -26,7 +26,7 @@ interface MusicPlayerProps {
   onToggleReverse: () => void;
 }
 
-export const MusicPlayer: React.FC<MusicPlayerProps> = ({
+export const MusicPlayer = React.memo<MusicPlayerProps>(({
   currentTrack, isPlaying, onPlayPause, onNext, onPrev, 
   currentTime, duration, onSeek, volume, onVolumeChange, onToggleQueue, onToggleComments,
   themeMode, onToggleTheme, isDarkMode,
@@ -317,4 +317,4 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
         </div>
     </div>
   );
-};
+});

@@ -77,6 +77,26 @@ export const fetchRecommendedPlaylists = async (): Promise<RecommendedPlaylist[]
   }
 };
 
+export const searchPlaylists = async (keywords: string): Promise<RecommendedPlaylist[]> => {
+  try {
+    // type 1000 = playlists
+    const data = await fetchWithFailover(`/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1000&limit=30`);
+    const playlists = data.result?.playlists || [];
+    
+    // Map search result format to RecommendedPlaylist format
+    return playlists.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      picUrl: p.coverImgUrl, // Search results use 'coverImgUrl' instead of 'picUrl'
+      playCount: p.playCount,
+      copywriter: p.creator?.nickname // Use creator name as subtitle
+    }));
+  } catch (e) {
+    console.warn("Failed to search playlists", e);
+    return [];
+  }
+};
+
 export const getAudioUrl = async (id: number): Promise<string> => {
   // Use standard Netease redirect interface for audio
   // This is a direct Netease URL (not via API proxy) and typically works well for <audio> tags

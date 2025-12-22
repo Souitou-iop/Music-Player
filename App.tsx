@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments, fetchRecommendedPlaylists } from './services/musicApi';
+import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments, fetchRecommendedPlaylists, searchPlaylists } from './services/musicApi';
 import { Track, LyricLine, Comment, RecommendedPlaylist } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
 import { APP_VERSION, DEFAULT_VOLUME } from './constants';
-import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw, Grid, Play, Music2 } from 'lucide-react';
+import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw, Grid, Play, Music2, ArrowLeft } from 'lucide-react';
 
 const DEFAULT_PLAYLIST_ID = '833444858'; 
 
@@ -14,7 +14,13 @@ const App: React.FC = () => {
   // Data State
   const [playlistId, setPlaylistId] = useState(DEFAULT_PLAYLIST_ID);
   const [playlist, setPlaylist] = useState<Track[]>([]);
+  
+  // Recommendations & Search State
   const [recommendations, setRecommendations] = useState<RecommendedPlaylist[]>([]);
+  const [searchResults, setSearchResults] = useState<RecommendedPlaylist[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   
@@ -131,24 +137,45 @@ const App: React.FC = () => {
       if (idParamMatch) return idParamMatch[1];
       const pathMatch = clean.match(/\/playlist\/(\d+)/);
       if (pathMatch) return pathMatch[1];
-      if (/^\d+$/.test(clean)) return clean;
+      if (/^\d{5,}$/.test(clean)) return clean; // Assuming IDs are at least 5 digits
       return null;
   };
 
-  const handlePlaylistSubmit = (e: React.FormEvent) => {
+  const handlePlaylistSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (tempPlaylistId) {
-        const extractedId = extractIdFromInput(tempPlaylistId);
-        
-        if (!extractedId) {
-            setPlayError("无效的歌单链接或ID");
-            return;
-        }
+    if (!tempPlaylistId.trim()) return;
+
+    const extractedId = extractIdFromInput(tempPlaylistId);
+    
+    // Case 1: Valid ID or Link found -> Direct Load
+    if (extractedId) {
         setTempPlaylistId(extractedId);
         if (extractedId === playlistId) return; 
         loadPlaylistData(extractedId);
         setShowQueue(false);
+        setIsSearching(false);
+        return;
     }
+
+    // Case 2: Not an ID -> Perform Search
+    setIsSearching(true);
+    setIsSearchLoading(true);
+    setViewTab('recommend'); // Switch to grid view to show results
+    try {
+        const results = await searchPlaylists(tempPlaylistId.trim());
+        setSearchResults(results);
+    } catch (e) {
+        console.error("Search failed", e);
+        setSearchResults([]);
+    } finally {
+        setIsSearchLoading(false);
+    }
+  };
+
+  const clearSearch = () => {
+      setIsSearching(false);
+      setSearchResults([]);
+      setTempPlaylistId('');
   };
 
   const currentTrack = playlist[currentIndex];
@@ -345,6 +372,17 @@ const App: React.FC = () => {
       localStorage.setItem('vinyl_volume', volume.toString());
   }, [volume]);
 
+  // Memoized handlers for MusicPlayer to prevent unnecessary re-renders
+  const handleToggleQueue = useCallback(() => setShowQueue(prev => !prev), []);
+  const handleToggleComments = useCallback(() => setShowComments(prev => !prev), []);
+  const handleToggleTheme = useCallback(() => {
+      const modes: ThemeMode[] = ['dark', 'light', 'system'];
+      const next = modes[(modes.indexOf(themeMode) + 1) % modes.length];
+      setThemeMode(next);
+  }, [themeMode]);
+  const handleToggleShuffle = useCallback(() => setIsShuffle(prev => !prev), []);
+  const handleToggleReverse = useCallback(() => setIsReverse(prev => !prev), []);
+
   // --- Auto-Scroll & Visual Engine ---
   const activeIndex = lyrics.findIndex((l, i) => l.time <= currentTime && (i === lyrics.length - 1 || lyrics[i+1].time > currentTime));
   
@@ -476,11 +514,17 @@ const App: React.FC = () => {
   const drawerBg = isDarkMode ? 'bg-neutral-900/95' : 'bg-white/90';
   const drawerBorder = isDarkMode ? 'border-white/5' : 'border-black/5';
 
-  const queueOverlay = useMemo(() => (
-      <div className={`fixed inset-0 z-[60] transition-all duration-500 flex items-center justify-center ${showQueue ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-          {/* Backdrop */}
+  const queueOverlay = useMemo(() => {
+    // Determine what content to show in the Grid area
+    const displayItems = isSearching ? searchResults : recommendations;
+    const showSkeleton = isSearchLoading || (viewTab === 'recommend' && !isSearching && recommendations.length === 0);
+    const emptySearch = isSearching && !isSearchLoading && searchResults.length === 0;
+
+    return (
+      <div className={`fixed inset-0 z-[60] transition-opacity duration-500 flex items-center justify-center ${showQueue ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+          {/* Backdrop - Lighter now because content behind is dimmed */}
           <div 
-            className="absolute inset-0 bg-black/60 backdrop-blur-xl transition-opacity duration-500" 
+            className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity duration-500" 
             onClick={() => setShowQueue(false)} 
           />
   
@@ -489,20 +533,31 @@ const App: React.FC = () => {
               
               {/* Header / Tabs / Search */}
               <div className="flex-none p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row gap-4 items-center justify-between bg-black/20">
-                   {/* Tabs */}
+                   {/* Tabs / Back Button */}
                    <div className="flex bg-black/30 p-1 rounded-lg self-start md:self-auto w-full md:w-auto">
-                      <button 
-                          onClick={() => setViewTab('recommend')}
-                          className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${viewTab === 'recommend' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
-                      >
-                          <Grid className="w-4 h-4" /> 推荐歌单
-                      </button>
-                      <button 
-                           onClick={() => setViewTab('queue')}
-                           className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${viewTab === 'queue' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
-                      >
-                          <ListMusic className="w-4 h-4" /> 当前播放 ({playlist.length})
-                      </button>
+                      {isSearching ? (
+                           <button 
+                               onClick={clearSearch}
+                               className="px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 bg-white/10 text-white shadow-lg border border-white/5 hover:bg-white/20 transition-all w-full md:w-auto"
+                           >
+                               <ArrowLeft className="w-4 h-4" /> 返回推荐
+                           </button>
+                      ) : (
+                          <>
+                            <button 
+                                onClick={() => setViewTab('recommend')}
+                                className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${viewTab === 'recommend' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                            >
+                                <Grid className="w-4 h-4" /> 推荐歌单
+                            </button>
+                            <button 
+                                onClick={() => setViewTab('queue')}
+                                className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${viewTab === 'queue' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                            >
+                                <ListMusic className="w-4 h-4" /> 当前播放 ({playlist.length})
+                            </button>
+                          </>
+                      )}
                    </div>
   
                    <div className="flex gap-4 w-full md:w-auto items-center">
@@ -512,9 +567,14 @@ const App: React.FC = () => {
                             <input 
                                 value={tempPlaylistId}
                                 onChange={(e) => setTempPlaylistId(e.target.value)}
-                                placeholder="输入网易云歌单 ID 或 链接..."
+                                placeholder="输入 ID, 链接 或 关键词搜索..."
                                 className="w-full bg-black/20 border border-white/10 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:bg-black/40 focus:border-white/30 outline-none transition-all placeholder:text-white/20"
                             />
+                            {tempPlaylistId && (
+                                <button type="button" onClick={() => setTempPlaylistId('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-white/30 hover:text-white">
+                                    <X className="w-3 h-3" />
+                                </button>
+                            )}
                        </form>
                        
                        <button onClick={() => setShowQueue(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors shrink-0">
@@ -526,36 +586,55 @@ const App: React.FC = () => {
               {/* Content Body */}
               <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth no-scrollbar">
                   {viewTab === 'recommend' ? (
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-8 pb-20">
-                          {recommendations.length > 0 ? recommendations.map(list => (
-                              <div 
-                                  key={list.id} 
-                                  onClick={() => handleRecommendationClick(list.id)}
-                                  className="group cursor-pointer flex flex-col gap-3"
-                              >
-                                  <div className="aspect-square rounded-xl overflow-hidden relative shadow-lg bg-white/5">
-                                      <img src={list.picUrl} className="w-full h-full object-cover transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-105" loading="lazy" />
-                                      <div className="absolute inset-0 bg-black/0 group-hover:bg-white/10 transition-colors duration-300" />
-                                      {/* Play overlay */}
-                                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                                            <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/20 shadow-xl transform scale-90 group-hover:scale-100 transition-transform">
-                                                <Play className="w-5 h-5 text-white fill-white ml-0.5" />
-                                            </div>
-                                      </div>
-                                      <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-md px-2 py-1 rounded text-[10px] flex items-center gap-1 text-white/90 font-medium">
-                                          <Play className="w-3 h-3 fill-current" /> {(list.playCount / 10000).toFixed(0)}万
-                                      </div>
-                                  </div>
-                                  <h3 className="text-sm font-medium text-white/80 line-clamp-2 leading-relaxed group-hover:text-white transition-colors">{list.name}</h3>
+                      <div className="pb-20">
+                          {isSearching && (
+                              <h3 className="text-lg font-bold text-white mb-6">
+                                  {isSearchLoading ? '正在搜索...' : `"${tempPlaylistId}" 的搜索结果`}
+                              </h3>
+                          )}
+                          
+                          {emptySearch ? (
+                              <div className="flex flex-col items-center justify-center opacity-40 py-20">
+                                  <Search className="w-12 h-12 mb-4" />
+                                  <p>未找到相关歌单</p>
                               </div>
-                          )) : (
-                              // Skeletons
-                              Array(10).fill(0).map((_, i) => (
-                                  <div key={i} className="flex flex-col gap-3 animate-pulse">
-                                      <div className="aspect-square rounded-xl bg-white/5" />
-                                      <div className="h-4 bg-white/5 rounded w-3/4" />
-                                  </div>
-                              ))
+                          ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-8">
+                                {showSkeleton ? (
+                                    Array(10).fill(0).map((_, i) => (
+                                        <div key={i} className="flex flex-col gap-3 animate-pulse">
+                                            <div className="aspect-square rounded-xl bg-white/5" />
+                                            <div className="h-4 bg-white/5 rounded w-3/4" />
+                                        </div>
+                                    ))
+                                ) : (
+                                    displayItems.map(list => (
+                                        <div 
+                                            key={list.id} 
+                                            onClick={() => handleRecommendationClick(list.id)}
+                                            className="group cursor-pointer flex flex-col gap-3"
+                                        >
+                                            <div className="aspect-square rounded-xl overflow-hidden relative shadow-lg bg-white/5">
+                                                <img src={list.picUrl} className="w-full h-full object-cover transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-105" loading="lazy" />
+                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-white/10 transition-colors duration-300" />
+                                                {/* Play overlay */}
+                                                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                                        <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/20 shadow-xl transform scale-90 group-hover:scale-100 transition-transform">
+                                                            <Play className="w-5 h-5 text-white fill-white ml-0.5" />
+                                                        </div>
+                                                </div>
+                                                <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-md px-2 py-1 rounded text-[10px] flex items-center gap-1 text-white/90 font-medium">
+                                                    <Play className="w-3 h-3 fill-current" /> {(list.playCount / 10000).toFixed(0)}万
+                                                </div>
+                                            </div>
+                                            <div className="min-w-0">
+                                                <h3 className="text-sm font-medium text-white/80 line-clamp-2 leading-relaxed group-hover:text-white transition-colors">{list.name}</h3>
+                                                {list.copywriter && <p className="text-xs text-white/40 mt-1 truncate">{list.copywriter}</p>}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
                           )}
                       </div>
                   ) : (
@@ -595,7 +674,8 @@ const App: React.FC = () => {
   
           </div>
       </div>
-  ), [showQueue, viewTab, recommendations, playlist, currentIndex, tempPlaylistId, isPlaying]);
+    );
+  }, [showQueue, viewTab, recommendations, searchResults, isSearching, isSearchLoading, playlist, currentIndex, tempPlaylistId, isPlaying]);
 
   const commentsDrawer = useMemo(() => (
       <>
@@ -730,7 +810,7 @@ const App: React.FC = () => {
           </div>
       )}
       
-      <div className="flex-1 flex flex-col lg:flex-row relative z-10 overflow-hidden min-h-0">
+      <div className={`flex-1 flex flex-col lg:flex-row relative z-10 overflow-hidden min-h-0 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] transform-gpu ${showQueue ? 'scale-95 opacity-40 blur-sm grayscale-[0.5]' : 'scale-100 opacity-100 blur-0 grayscale-0'}`}>
         
         {AlbumArt}
 
@@ -842,19 +922,15 @@ const App: React.FC = () => {
         onSeek={handleSeek}
         volume={volume}
         onVolumeChange={setVolume}
-        onToggleQueue={() => setShowQueue(!showQueue)}
-        onToggleComments={() => setShowComments(!showComments)}
+        onToggleQueue={handleToggleQueue}
+        onToggleComments={handleToggleComments}
         themeMode={themeMode}
-        onToggleTheme={() => {
-            const modes: ThemeMode[] = ['dark', 'light', 'system'];
-            const next = modes[(modes.indexOf(themeMode) + 1) % modes.length];
-            setThemeMode(next);
-        }}
+        onToggleTheme={handleToggleTheme}
         isDarkMode={isDarkMode}
         isShuffle={isShuffle}
-        onToggleShuffle={() => setIsShuffle(!isShuffle)}
+        onToggleShuffle={handleToggleShuffle}
         isReverse={isReverse}
-        onToggleReverse={() => setIsReverse(!isReverse)}
+        onToggleReverse={handleToggleReverse}
       />
     </div>
   );
