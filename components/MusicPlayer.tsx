@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Volume2, ListMusic, MessageSquare, Moon, Sun, Monitor, Laptop } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Volume2, ListMusic, MessageSquare, Moon, Sun, Monitor, Laptop, Shuffle, ArrowRight } from 'lucide-react';
 import { Track } from '../types';
 import { ThemeMode } from '../App';
 
@@ -20,15 +20,22 @@ interface MusicPlayerProps {
   themeMode: ThemeMode;
   onToggleTheme: () => void;
   isDarkMode: boolean;
+  // New props
+  isShuffle: boolean;
+  onToggleShuffle: () => void;
+  isReverse: boolean;
+  onToggleReverse: () => void;
 }
 
 export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   currentTrack, isPlaying, onPlayPause, onNext, onPrev, 
   currentTime, duration, onSeek, volume, onVolumeChange, onToggleQueue, onToggleComments,
-  themeMode, onToggleTheme, isDarkMode
+  themeMode, onToggleTheme, isDarkMode,
+  isShuffle, onToggleShuffle, isReverse, onToggleReverse
 }) => {
   
   const [animatingTheme, setAnimatingTheme] = useState(false);
+  const [animatingReverse, setAnimatingReverse] = useState(false);
   
   // Dragging State
   const [isDragging, setIsDragging] = useState(false);
@@ -41,6 +48,13 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     const timer = setTimeout(() => setAnimatingTheme(false), 500); // Sync with CSS transition
     return () => clearTimeout(timer);
   }, [themeMode]);
+
+  // Trigger animation on reverse toggle
+  useEffect(() => {
+    setAnimatingReverse(true);
+    const timer = setTimeout(() => setAnimatingReverse(false), 400);
+    return () => clearTimeout(timer);
+  }, [isReverse]);
 
   // --- Dragging Logic ---
   const calculateTimeFromEvent = (clientX: number) => {
@@ -106,6 +120,12 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const glassBg = isDarkMode ? 'bg-neutral-900/60 border-white/5' : 'bg-white/70 border-black/5';
   const playButtonClass = isDarkMode ? 'bg-white text-black shadow-white/10' : 'bg-black text-white shadow-black/20';
 
+  // Control Buttons Logic
+  const controlBtnClass = `p-2 rounded-lg relative ${transitionClass} ${iconHoverClass} active:scale-95`;
+  const shuffleActiveClass = isShuffle 
+      ? (isDarkMode ? 'bg-white/10 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' : 'bg-black/10 text-black shadow-[0_0_10px_rgba(0,0,0,0.1)]') 
+      : textDimColor;
+
   return (
     <div className="w-full h-[96px] relative z-50">
         <div className={`absolute inset-0 backdrop-blur-2xl border-t ${transitionClass} ${glassBg}`} />
@@ -139,18 +159,42 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             {/* 2. Controls & Progress (Center) */}
             <div className="flex-1 flex flex-col items-center justify-center max-w-[600px]">
                 {/* Buttons */}
-                <div className="flex items-center gap-8 mb-2">
+                <div className="flex items-center gap-6 mb-2">
+                    {/* Shuffle Button */}
+                    <button 
+                        onClick={onToggleShuffle} 
+                        className={`${controlBtnClass} ${shuffleActiveClass}`}
+                        title={isShuffle ? "关闭随机" : "开启随机"}
+                    >
+                        <Shuffle className="w-4 h-4" />
+                        {isShuffle && <div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-current opacity-60"></div>}
+                    </button>
+
                     <button onClick={onPrev} className={`${transitionClass} active:scale-95 ${textDimColor} ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`}>
                         <SkipBack className="w-7 h-7 fill-current" />
                     </button>
+
                     <button 
                         onClick={onPlayPause}
                         className={`w-10 h-10 rounded-full flex items-center justify-center hover:scale-105 active:scale-95 shadow-lg ${transitionClass} ${playButtonClass}`}
                     >
                         {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-1" />}
                     </button>
+
                     <button onClick={onNext} className={`${transitionClass} active:scale-95 ${textDimColor} ${isDarkMode ? 'hover:text-white' : 'hover:text-black'}`}>
                         <SkipForward className="w-7 h-7 fill-current" />
+                    </button>
+
+                    {/* Order/Reverse Toggle Button */}
+                    <button 
+                        onClick={onToggleReverse} 
+                        className={`${controlBtnClass} ${textDimColor}`}
+                        title={isReverse ? "倒序播放" : "顺序播放"}
+                    >
+                        {/* We use a single ArrowRight icon and rotate it 180deg for reverse, creating a smooth transition */}
+                        <div className={`transition-transform duration-500 ease-spring ${isReverse ? 'rotate-180' : 'rotate-0'}`}>
+                            <ArrowRight className="w-5 h-5" />
+                        </div>
                     </button>
                 </div>
                 
@@ -159,18 +203,14 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                     <span className="w-8 text-right tabular-nums">{formatTime(effectiveTime)}</span>
                     <div 
                         ref={progressBarRef}
-                        className="flex-1 h-1 rounded-full relative group cursor-pointer bg-current opacity-20 touch-none" // Added touch-none for mobile scrubbing
+                        className="flex-1 h-1 rounded-full relative group cursor-pointer bg-current opacity-20 touch-none" 
                         onPointerDown={handlePointerDown}
                     >
-                        {/* Hover Hit Area - Increased for better usability */}
                         <div className="absolute -top-3 -bottom-3 inset-x-0 bg-transparent z-10" />
-                        
-                        {/* Fill */}
                         <div 
                             className={`h-full rounded-full relative ${transitionClass} ${isDarkMode ? 'bg-white/40 group-hover:bg-white' : 'bg-black/40 group-hover:bg-black'} ${isDragging ? (isDarkMode ? '!bg-white' : '!bg-black') + ' !opacity-100' : ''}`} 
                             style={{ width: `${progressPercent}%` }}
                         >
-                             {/* Thumb */}
                             <div 
                                 className={`absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-sm transition-all duration-200 ${isDarkMode ? 'bg-white' : 'bg-black'} 
                                 ${isDragging ? 'opacity-100 scale-125' : 'opacity-0 group-hover:opacity-100 scale-50 group-hover:scale-100'}`} 
@@ -183,7 +223,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
             {/* 3. Volume & Tools (Right) */}
             <div className="w-[25%] flex items-center justify-end gap-5">
-                {/* Theme Toggle Button (Refined Animation) */}
                 <button 
                     onClick={onToggleTheme}
                     className={`p-2 rounded-lg relative overflow-hidden group ${transitionClass} ${textDimColor} ${iconHoverClass} ${animatingTheme ? 'scale-90' : 'scale-100'}`}

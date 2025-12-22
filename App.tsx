@@ -25,6 +25,10 @@ const App: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   
+  // Playback Mode State
+  const [isShuffle, setIsShuffle] = useState(false);
+  const [isReverse, setIsReverse] = useState(false);
+  
   // Volume with Persistence
   const [volume, setVolume] = useState(() => {
       const saved = localStorage.getItem('vinyl_volume');
@@ -202,7 +206,6 @@ const App: React.FC = () => {
   useEffect(() => {
       const loop = () => {
           if (audioRef.current && !audioRef.current.paused) {
-              // OPTIMIZATION: Check if time actually changed significantly to avoid unnecessary state updates
               const time = audioRef.current.currentTime * 1000;
               setCurrentTime(time);
           }
@@ -245,16 +248,47 @@ const App: React.FC = () => {
       handlePlayError("音频加载失败");
   };
 
+  // Helper to get random index
+  const getRandomIndex = useCallback((current: number, length: number) => {
+      if (length <= 1) return 0;
+      let next = Math.floor(Math.random() * length);
+      // Simple avoid-same logic
+      while (next === current) {
+          next = Math.floor(Math.random() * length);
+      }
+      return next;
+  }, []);
+
   const playNext = useCallback(() => {
       if (playlist.length === 0) return;
-      setCurrentIndex((prev) => (prev + 1) % playlist.length);
-  }, [playlist.length]);
+      setCurrentIndex((prev) => {
+          if (isShuffle) {
+              return getRandomIndex(prev, playlist.length);
+          }
+          if (isReverse) {
+              // Reverse mode: Next goes to previous song index (prev - 1)
+              return (prev - 1 + playlist.length) % playlist.length;
+          }
+          // Normal mode: Next goes to next song index
+          return (prev + 1) % playlist.length;
+      });
+  }, [playlist.length, isShuffle, isReverse, getRandomIndex]);
 
   const playPrev = useCallback(() => {
       if (playlist.length === 0) return;
-      setCurrentIndex((prev) => (prev - 1 + playlist.length) % playlist.length);
       setConsecutiveErrors(0);
-  }, [playlist.length]);
+      setCurrentIndex((prev) => {
+          if (isShuffle) {
+              return getRandomIndex(prev, playlist.length);
+          }
+          if (isReverse) {
+              // Reverse mode: Prev goes to next song index (prev + 1) -> Inverse of PlayNext
+              return (prev + 1) % playlist.length;
+          }
+          // Normal mode: Prev goes to previous song index
+          return (prev - 1 + playlist.length) % playlist.length;
+      });
+  }, [playlist.length, isShuffle, isReverse, getRandomIndex]);
 
   const togglePlay = useCallback(async () => {
       if (!audioRef.current || !currentTrack) return;
@@ -310,14 +344,12 @@ const App: React.FC = () => {
       if (lyricsContainerRef.current && activeIndex !== -1) {
           const el = lyricsContainerRef.current.children[activeIndex] as HTMLElement;
           if (el) {
-              // Use refined scrolling behavior
               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
       }
   }, [activeIndex]);
 
   // --- Optimization: Memoize Background Layers ---
-  // The background is heavy (filters, blends). We don't want it re-rendering on every `currentTime` update (60fps).
   const backgroundLayer = useMemo(() => (
     <>
       {/* BASE LAYER: DARK (Screen Blend) */}
@@ -695,6 +727,10 @@ const App: React.FC = () => {
             setThemeMode(next);
         }}
         isDarkMode={isDarkMode}
+        isShuffle={isShuffle}
+        onToggleShuffle={() => setIsShuffle(!isShuffle)}
+        isReverse={isReverse}
+        onToggleReverse={() => setIsReverse(!isReverse)}
       />
     </div>
   );
