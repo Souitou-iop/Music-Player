@@ -370,11 +370,18 @@ const App: React.FC = () => {
   }, [isPlaying, currentTrack, playNext]);
 
   const handleSeek = useCallback((ms: number) => {
+      // 1. Force release user scroll lock immediately
+      isUserScrollingRef.current = false;
+      if (userScrollTimeout.current) clearTimeout(userScrollTimeout.current);
+
+      // 2. Optimistic UI update - Don't wait for audio event
+      setCurrentTime(ms);
+
+      // 3. Audio Update
       if (audioRef.current) {
           const newTime = ms / 1000;
           if (isFinite(newTime)) {
             audioRef.current.currentTime = newTime;
-            setCurrentTime(ms);
           }
       }
   }, []);
@@ -440,6 +447,7 @@ const App: React.FC = () => {
 
     // PERFORMANCE: Write Layout (Batch Write)
     childrenStates.forEach(({ child, distance, i }) => {
+        // Optimize: If completely off screen (far away), set static style to avoid calculation
         if (distance > containerRect.height) {
             child.style.transform = `scale(0.9)`;
             child.style.filter = `blur(0px)`; 
@@ -454,6 +462,7 @@ const App: React.FC = () => {
              child.style.filter = `blur(0px)`;
              child.style.opacity = `1`;
         } else {
+             // Smoother easing curve
              let intensity = Math.min(distance / activeZone, 1);
              intensity = Math.pow(intensity, 1.3); // Ease
 
@@ -484,6 +493,7 @@ const App: React.FC = () => {
   const userScrollTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+      // Trigger scroll immediately when active index changes, unless user is scrolling
       if (!isUserScrollingRef.current && lyricsContainerRef.current && activeIndex !== -1) {
           const el = lyricsContainerRef.current.children[activeIndex] as HTMLElement;
           if (el) {
@@ -549,7 +559,14 @@ const App: React.FC = () => {
     </>
   ), [bgPalette, isDarkMode]);
 
-  const transitionClass = "transition-[color,background-color,border-color,opacity,shadow,transform,filter] duration-500 ease-[cubic-bezier(0.2,0,0,1)]";
+  // Separated transitions: 
+  // 1. General UI (slow, layout related)
+  const layoutTransitionClass = "transition-[background-color,border-color,opacity,shadow] duration-500 ease-[cubic-bezier(0.2,0,0,1)]";
+  
+  // 2. Lyric Color (smooth fade for text color only). 
+  // IMPORTANT: Do NOT include transform/filter here, as they are handled by JS frame loop.
+  const lyricTransitionClass = "transition-colors duration-300 ease-out"; 
+
   const textColor = isDarkMode ? 'text-white' : 'text-slate-900';
   const textSubColor = isDarkMode ? 'text-white/50' : 'text-slate-500';
   const lyricInactiveColor = isDarkMode ? 'text-white/40' : 'text-slate-400';
@@ -725,19 +742,19 @@ const App: React.FC = () => {
             className={`fixed inset-0 z-[55] bg-black/20 backdrop-blur-[1px] transition-opacity duration-500 ${showComments ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
             onClick={() => setShowComments(false)}
         />
-        <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] backdrop-blur-3xl border-l shadow-2xl z-[60] transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showComments ? 'translate-x-0' : 'translate-x-full'} ${drawerBg} ${drawerBorder} ${textColor} ${transitionClass}`}>
+        <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] backdrop-blur-3xl border-l shadow-2xl z-[60] transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showComments ? 'translate-x-0' : 'translate-x-full'} ${drawerBg} ${drawerBorder} ${textColor} ${layoutTransitionClass}`}>
                 <div className="flex flex-col h-full">
-                    <div className={`p-6 pt-8 border-b flex items-center justify-between ${transitionClass} ${isDarkMode ? 'border-white/5' : 'border-black/5'}`}>
+                    <div className={`p-6 pt-8 border-b flex items-center justify-between ${layoutTransitionClass} ${isDarkMode ? 'border-white/5' : 'border-black/5'}`}>
                         <h2 className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5" /> 精选评论</h2>
                         <div className="flex items-center gap-2">
                             <button 
                                 onClick={handleRefreshComments} 
-                                className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}
+                                className={`p-2 rounded-full ${layoutTransitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}
                                 title="刷新评论"
                             >
                                 <RefreshCw className={`w-4 h-4 ${isRefreshingComments ? 'animate-spin' : ''}`} />
                             </button>
-                            <button onClick={() => setShowComments(false)} className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}>
+                            <button onClick={() => setShowComments(false)} className={`p-2 rounded-full ${layoutTransitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}>
                                 <X className="w-4 h-4" />
                             </button>
                         </div>
@@ -745,7 +762,7 @@ const App: React.FC = () => {
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
                         {comments.length > 0 ? comments.map(c => (
                             <div key={c.commentId} className="flex gap-4 group">
-                                <img src={c.user.avatarUrl} loading="lazy" className={`w-10 h-10 rounded-full border shadow-sm ${transitionClass} ${isDarkMode ? 'border-white/10' : 'border-black/10'}`} />
+                                <img src={c.user.avatarUrl} loading="lazy" className={`w-10 h-10 rounded-full border shadow-sm ${layoutTransitionClass} ${isDarkMode ? 'border-white/10' : 'border-black/10'}`} />
                                 <div className="flex-1">
                                     <div className="flex justify-between items-baseline mb-1">
                                         <span className="text-sm font-semibold opacity-90">{c.user.nickname}</span>
@@ -767,10 +784,10 @@ const App: React.FC = () => {
   ), [showComments, comments, isDarkMode, drawerBg, drawerBorder, textColor, isRefreshingComments, handleRefreshComments]);
 
   const AlbumArt = useMemo(() => (
-    <div className={`flex-1 flex items-center justify-center p-8 lg:p-12 relative min-h-0 min-w-0 ${transitionClass}`}>
+    <div className={`flex-1 flex items-center justify-center p-8 lg:p-12 relative min-h-0 min-w-0 ${layoutTransitionClass}`}>
         <div className={`relative aspect-square w-full max-w-[280px] lg:max-w-[550px] transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isPlaying ? 'scale-100' : 'scale-[0.8]'}`}>
             <div 
-                className={`absolute inset-0 rounded-xl blur-3xl scale-110 -z-10 transition-colors duration-[2000ms] ${transitionClass}`} 
+                className={`absolute inset-0 rounded-xl blur-3xl scale-110 -z-10 transition-colors duration-[2000ms] ${layoutTransitionClass}`} 
                 style={{ background: `rgb(${dominantColor})`, opacity: isDarkMode ? 0.6 : 0.3 }}
             />
             {currentTrack?.al.picUrl && (
@@ -779,7 +796,7 @@ const App: React.FC = () => {
                     loading="eager"
                     fetchPriority="high"
                     decoding="async"
-                    className={`w-full h-full object-cover rounded-xl relative z-20 ${transitionClass} 
+                    className={`w-full h-full object-cover rounded-xl relative z-20 ${layoutTransitionClass} 
                         ${isDarkMode 
                             ? 'shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/5' 
                             : 'shadow-[0_20px_40px_rgba(0,0,0,0.2)] border border-black/5 ring-1 ring-black/5'
@@ -820,7 +837,7 @@ const App: React.FC = () => {
                                 value={tempPlaylistId}
                                 onChange={(e) => setTempPlaylistId(e.target.value)}
                                 placeholder="输入歌单 ID..."
-                                className={`w-full border rounded-lg py-3 pl-4 pr-12 text-sm focus:outline-none ${transitionClass} ${isDarkMode ? 'bg-white/10 border-white/10 focus:border-white/30 text-white' : 'bg-black/5 border-black/10 focus:border-black/20 text-black'}`}
+                                className={`w-full border rounded-lg py-3 pl-4 pr-12 text-sm focus:outline-none ${layoutTransitionClass} ${isDarkMode ? 'bg-white/10 border-white/10 focus:border-white/30 text-white' : 'bg-black/5 border-black/10 focus:border-black/20 text-black'}`}
                             />
                             <button type="submit" className="absolute right-2 top-2 p-1 rounded-md opacity-60 hover:opacity-100">
                                 <Search className="w-5 h-5" />
@@ -834,7 +851,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`h-screen w-screen flex flex-col relative overflow-hidden font-sans select-none ${isDarkMode ? 'bg-black' : 'bg-[#f5f5f7]'} ${transitionClass}`}>
+    <div className={`h-screen w-screen flex flex-col relative overflow-hidden font-sans select-none ${isDarkMode ? 'bg-black' : 'bg-[#f5f5f7]'} ${layoutTransitionClass}`}>
       <audio 
         key={currentTrack?.id}
         ref={audioRef}
@@ -880,7 +897,7 @@ const App: React.FC = () => {
                         const subProgress = (progress * totalChars) % 1; 
 
                         return (
-                            <span className={`inline-block w-full break-words leading-tight tracking-tight py-1 ${textClass}`}>
+                            <span className={`inline-block w-full break-words leading-tight tracking-tight py-1 ${textClass} ${lyricTransitionClass}`}>
                                 {chars.map((char, charIdx) => {
                                     if (charIdx < activeCharIndex) {
                                         return <span key={charIdx} className={isDarkMode ? 'text-white' : 'text-black'}>{char}</span>;
@@ -913,18 +930,18 @@ const App: React.FC = () => {
                     return (
                         <div 
                             key={i} 
-                            className={`origin-left cursor-pointer hover:opacity-80 group w-full ${line.isContinuation ? "mt-3" : "mt-10"}`}
+                            className={`origin-left cursor-pointer active:scale-95 hover:opacity-80 group w-full ${line.isContinuation ? "mt-3" : "mt-10"} ${lyricTransitionClass}`}
                             onClick={() => handleSeek(line.time)}
                         >
                             {isActive ? renderActiveContent() : (
-                                <span className={`inline-block leading-tight tracking-tight py-1 break-words text-balance ${textClass}`}>
+                                <span className={`inline-block leading-tight tracking-tight py-1 break-words text-balance ${textClass} ${lyricTransitionClass}`}>
                                     {line.text}
                                 </span>
                             )}
                             
                             {line.trans && (
                                 <p 
-                                    className={`font-medium mt-2 leading-tight transition-all duration-300 ${
+                                    className={`font-medium mt-2 leading-tight ${lyricTransitionClass} ${
                                         isActive 
                                             ? (isDarkMode ? 'text-white/60' : 'text-black/60') 
                                             : (isDarkMode ? 'text-white/30' : 'text-black/30')
