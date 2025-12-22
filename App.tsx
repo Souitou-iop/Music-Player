@@ -340,37 +340,59 @@ const App: React.FC = () => {
   const updateLyricVisuals = useCallback(() => {
     if (!lyricsContainerRef.current) return;
     const container = lyricsContainerRef.current;
+    
+    // PERFORMANCE: Read Layout (Batch Read)
+    // 1. Get container bounds
     const containerRect = container.getBoundingClientRect();
     const activeZone = containerRect.height * 0.45; 
     const center = containerRect.top + containerRect.height / 2;
     const activeIdx = activeIndexRef.current;
     const isScrolling = isUserScrollingRef.current;
-
-    Array.from(container.children).forEach((child, i) => {
-        const element = child as HTMLElement;
-        const rect = element.getBoundingClientRect();
+    
+    // 2. Get children and read their rects in one go
+    // Note: We use Array.from once. In a perfect world we'd cache the children array if length doesn't change, 
+    // but Array.from is fast enough compared to the layout thrashing.
+    const children = Array.from(container.children) as HTMLElement[];
+    const childrenStates = children.map((child, i) => {
+        // Optimization: if we know the height of items is roughly fixed, we could approximate.
+        // But getBoundingClientRect is unavoidable for precise "fisheye" effect.
+        // The key is doing all reads BEFORE any writes.
+        const rect = child.getBoundingClientRect();
         const elementCenter = rect.top + rect.height / 2;
         const distance = Math.abs(center - elementCenter);
-        
+        return { child, distance, i, rectHeight: rect.height };
+    });
+
+    // PERFORMANCE: Write Layout (Batch Write)
+    childrenStates.forEach(({ child, distance, i }) => {
+        // Optimization: Skip calculation for off-screen elements
+        // If element is further than 1 container height away from center, hide it static
+        if (distance > containerRect.height) {
+            // Only write if it's not already hidden to avoid unnecessary paint (browser optimization handles this mostly)
+            child.style.transform = `scale(0.9)`;
+            child.style.filter = `blur(0px)`; // No blur for offscreen items (Save GPU)
+            child.style.opacity = `0.1`; 
+            return;
+        }
+
         let isActiveForce = (!isScrolling && i === activeIdx);
 
-        // If it is the active line and we are not manually scrolling, force clarity
         if (isActiveForce) {
-             element.style.transform = `scale(1)`;
-             element.style.filter = `blur(0px)`;
-             element.style.opacity = `1`;
+             child.style.transform = `scale(1)`;
+             child.style.filter = `blur(0px)`;
+             child.style.opacity = `1`;
         } else {
-             // Standard distance-based falloff
              let intensity = Math.min(distance / activeZone, 1);
              intensity = Math.pow(intensity, 1.3); // Ease
 
              const scale = 1 - (intensity * 0.15); 
-             const blur = intensity * 4; 
-             const opacity = 1 - (intensity * 0.7); 
+             // Clamp blur to integer to possibly help caching, though negligible
+             const blur = (intensity * 4).toFixed(1); 
+             const opacity = (1 - (intensity * 0.7)).toFixed(2); 
 
-             element.style.transform = `scale(${scale})`;
-             element.style.filter = `blur(${blur}px)`;
-             element.style.opacity = opacity.toString();
+             child.style.transform = `scale(${scale})`;
+             child.style.filter = `blur(${blur}px)`;
+             child.style.opacity = opacity;
         }
     });
   }, []);
@@ -415,6 +437,13 @@ const App: React.FC = () => {
   // --- Background & Styles ---
   const backgroundLayer = useMemo(() => (
     <>
+      {/* 
+         PERFORMANCE OPTIMIZATION:
+         Removed the top-level backdrop-blur-[100px] layer.
+         The blobs are already blurred. Adding a backdrop-blur on top of blurred moving elements 
+         forces the GPU to re-sample the entire frame buffer every frame. 
+         Replaced with simple semi-transparent overlays.
+      */}
       <div className="fixed inset-0 -z-50 bg-[#050505]">
           <div className="absolute inset-0 overflow-hidden pointer-events-none transform-gpu">
               <div className="absolute inset-0 opacity-20 transition-colors duration-[2000ms]" style={{ background: `rgb(${dominantColor})` }} />
@@ -427,7 +456,8 @@ const App: React.FC = () => {
                  style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 60%)`, animationDirection: 'reverse', animationDuration: '35s' }}
               />
           </div>
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[100px]" />
+          {/* Replaced backdrop-blur with simple opacity */}
+          <div className="absolute inset-0 bg-black/60" /> 
       </div>
 
       <div className={`fixed inset-0 -z-40 transition-opacity duration-500 ease-[cubic-bezier(0.2,0,0,1)] ${isDarkMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
@@ -439,7 +469,8 @@ const App: React.FC = () => {
                  style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 70%)`, animationDuration: '50s' }}
               />
           </div>
-          <div className="absolute inset-0 bg-white/30 backdrop-blur-[100px]" />
+           {/* Replaced backdrop-blur with simple opacity */}
+          <div className="absolute inset-0 bg-white/40" />
       </div>
     </>
   ), [dominantColor, isDarkMode]);
@@ -666,7 +697,7 @@ const App: React.FC = () => {
                         const subProgress = (progress * totalChars) % 1; 
 
                         return (
-                            <span className={`inline-block w-full break-words leading-tight tracking-tight py-1 ${textClass} transition-colors duration-300`}>
+                            <span className={`inline-block w-full break-words leading-tight tracking-tight py-1 ${textClass}`}>
                                 {chars.map((char, charIdx) => {
                                     if (charIdx < activeCharIndex) {
                                         return <span key={charIdx} className={isDarkMode ? 'text-white' : 'text-black'}>{char}</span>;
@@ -699,11 +730,11 @@ const App: React.FC = () => {
                     return (
                         <div 
                             key={i} 
-                            className={`origin-left cursor-pointer hover:opacity-80 group w-full ${line.isContinuation ? "mt-3" : "mt-10"} transition-colors duration-300`}
+                            className={`origin-left cursor-pointer hover:opacity-80 group w-full ${line.isContinuation ? "mt-3" : "mt-10"}`}
                             onClick={() => handleSeek(line.time)}
                         >
                             {isActive ? renderActiveContent() : (
-                                <span className={`inline-block leading-tight tracking-tight py-1 break-words text-balance ${textClass} transition-colors duration-300`}>
+                                <span className={`inline-block leading-tight tracking-tight py-1 break-words text-balance ${textClass}`}>
                                     {line.text}
                                 </span>
                             )}
