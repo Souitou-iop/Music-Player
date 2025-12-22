@@ -10,6 +10,7 @@ export interface Album {
   id: number;
   name: string;
   picUrl: string;
+  pic_str?: string;
 }
 
 export interface Track {

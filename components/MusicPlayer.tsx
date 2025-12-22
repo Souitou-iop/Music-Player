@@ -24,13 +24,15 @@ interface MusicPlayerProps {
   onToggleShuffle: () => void;
   isReverse: boolean;
   onToggleReverse: () => void;
+  onArtistClick: (artistId: number) => void;
 }
 
 export const MusicPlayer = React.memo<MusicPlayerProps>(({
   currentTrack, isPlaying, onPlayPause, onNext, onPrev, 
   currentTime, duration, onSeek, volume, onVolumeChange, onToggleQueue, onToggleComments,
   themeMode, onToggleTheme, isDarkMode,
-  isShuffle, onToggleShuffle, isReverse, onToggleReverse
+  isShuffle, onToggleShuffle, isReverse, onToggleReverse,
+  onArtistClick
 }) => {
   
   const [animatingTheme, setAnimatingTheme] = useState(false);
@@ -173,9 +175,22 @@ export const MusicPlayer = React.memo<MusicPlayerProps>(({
                     </div>
                     <div className="flex flex-col min-w-0">
                         <h4 className={`font-medium truncate text-sm ${transitionClass} ${textColor}`}>{currentTrack.name}</h4>
-                        <p className={`text-xs truncate ${transitionClass} ${textDimColor}`}>
-                            {currentTrack.ar.map(a => a.name).join(', ')}
-                        </p>
+                        <div className={`text-xs truncate ${transitionClass} ${textDimColor}`}>
+                            {currentTrack.ar.map((a, idx) => (
+                                <span key={a.id}>
+                                    {idx > 0 && ", "}
+                                    <span 
+                                        className="cursor-pointer hover:underline hover:text-opacity-80 transition-opacity"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onArtistClick(a.id);
+                                        }}
+                                    >
+                                        {a.name}
+                                    </span>
+                                </span>
+                            ))}
+                        </div>
                     </div>
                 </>
                 )}

@@ -1,15 +1,16 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments, fetchRecommendedPlaylists, searchPlaylists, searchSongs, searchArtists, fetchArtistSongs } from './services/musicApi';
+import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments, fetchRecommendedPlaylists, searchPlaylists, searchSongs, searchArtists, fetchArtistSongsList, fetchArtistDetail } from './services/musicApi';
 import { Track, LyricLine, Comment, RecommendedPlaylist, Artist } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
 import { APP_VERSION, DEFAULT_VOLUME } from './constants';
-import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw, Grid, Play, Music2, ArrowLeft, Mic2, User as UserIcon } from 'lucide-react';
+import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw, Grid, Play, Music2, ArrowLeft, Mic2, User as UserIcon, Calendar, Flame } from 'lucide-react';
 
 const DEFAULT_PLAYLIST_ID = '833444858'; 
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 type SearchType = 'playlist' | 'song' | 'artist';
+type ViewType = 'recommend' | 'queue' | 'artist';
 
 // Helper to adjust color vibrancy
 const adjustColor = (r: number, g: number, b: number, saturationBoost: number = 1.2) => {
@@ -37,6 +38,13 @@ const App: React.FC = () => {
 
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchLoading, setIsSearchLoading] = useState(false);
+
+  // Artist Detail State
+  const [selectedArtistId, setSelectedArtistId] = useState<number | null>(null);
+  const [artistDetail, setArtistDetail] = useState<any>(null);
+  const [artistSongs, setArtistSongs] = useState<Track[]>([]);
+  const [artistSortOrder, setArtistSortOrder] = useState<'hot' | 'time'>('hot');
+  const [isArtistLoading, setIsArtistLoading] = useState(false);
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -76,7 +84,7 @@ const App: React.FC = () => {
   
   // UI Toggles
   const [showQueue, setShowQueue] = useState(false);
-  const [viewTab, setViewTab] = useState<'recommend' | 'queue'>('recommend');
+  const [viewTab, setViewTab] = useState<ViewType>('recommend');
   const [showComments, setShowComments] = useState(false);
   
   // Theme State
@@ -241,24 +249,58 @@ const App: React.FC = () => {
       setShowQueue(false);
   };
 
-  const handleArtistResultClick = async (artistId: number) => {
-      setIsSearchLoading(true);
+  // Load Artist Data (Detail + Songs)
+  const loadArtistData = async (artistId: number, order: 'hot' | 'time' = 'hot') => {
+      setIsArtistLoading(true);
+      setSelectedArtistId(artistId);
+      setArtistSortOrder(order);
+      // Ensure the view switches to artist detail
+      setViewTab('artist');
+      setShowQueue(true);
+
       try {
-          const tracks = await fetchArtistSongs(artistId);
-          if (tracks.length > 0) {
-              setPlaylist(tracks);
-              setCurrentIndex(0);
-              setIsPlaying(true);
-              setPlayError(null);
-              setShowQueue(false);
-          } else {
-             alert("该歌手暂无热门歌曲");
-          }
+          // Parallel fetch: detail + songs
+          const [detail, songs] = await Promise.all([
+              fetchArtistDetail(artistId),
+              fetchArtistSongsList(artistId, order)
+          ]);
+
+          setArtistDetail(detail);
+          setArtistSongs(songs);
       } catch (e) {
-          console.error("Failed to load artist songs", e);
+          console.error("Failed to load artist data", e);
       } finally {
-          setIsSearchLoading(false);
+          setIsArtistLoading(false);
       }
+  };
+
+  // Click handler from Search
+  const handleArtistResultClick = (artistId: number) => {
+      // Clear searching state visuals but keep input for back navigation? 
+      // For now, let's treat artist detail as a separate overlay view within the queue drawer
+      loadArtistData(artistId, 'hot');
+  };
+
+  // Click handler from Player (Bottom Left)
+  const handlePlayerArtistClick = (artistId: number) => {
+      loadArtistData(artistId, 'hot');
+  };
+
+  // Sort toggle handler
+  const handleArtistSortChange = (order: 'hot' | 'time') => {
+      if (!selectedArtistId) return;
+      if (order === artistSortOrder) return; // No change
+      loadArtistData(selectedArtistId, order);
+  };
+
+  // Play from Artist List
+  const handleArtistSongClick = (track: Track) => {
+      setPlaylist(artistSongs);
+      const idx = artistSongs.findIndex(t => t.id === track.id);
+      setCurrentIndex(idx !== -1 ? idx : 0);
+      setIsPlaying(true);
+      setPlayError(null);
+      setShowQueue(false);
   };
 
   const currentTrack = playlist[currentIndex];
@@ -644,7 +686,9 @@ const App: React.FC = () => {
     let displayItems: any[] = [];
     let emptySearch = false;
 
-    if (isSearching) {
+    if (viewTab === 'artist') {
+        displayItems = artistSongs;
+    } else if (isSearching) {
         if (searchType === 'playlist') {
             displayItems = playlistSearchResults;
             emptySearch = !isSearchLoading && playlistSearchResults.length === 0;
@@ -660,7 +704,7 @@ const App: React.FC = () => {
         emptySearch = false;
     }
 
-    const showSkeleton = isSearchLoading || (viewTab === 'recommend' && !isSearching && recommendations.length === 0);
+    const showSkeleton = (isSearchLoading || isArtistLoading) || (viewTab === 'recommend' && !isSearching && recommendations.length === 0);
 
     return (
       <div className={`fixed inset-0 z-[60] transition-opacity duration-500 flex items-center justify-center ${showQueue ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
@@ -676,33 +720,52 @@ const App: React.FC = () => {
               {/* Header / Tabs / Search */}
               <div className="flex-none p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row gap-4 items-center justify-between bg-black/20">
                    {/* Tabs / Back Button */}
-                   <div className="flex bg-black/30 p-1 rounded-lg self-start md:self-auto w-full md:w-auto overflow-x-auto no-scrollbar">
-                      {isSearching ? (
+                   <div className="flex bg-black/30 p-1 rounded-lg self-start md:self-auto w-full md:w-auto overflow-x-auto no-scrollbar items-center">
+                      {isSearching || viewTab === 'artist' ? (
                            <>
                              <button 
-                                 onClick={clearSearch}
+                                 onClick={() => {
+                                    if (viewTab === 'artist') {
+                                        // Go back to search if we came from search, or recommend
+                                        if (isSearching) setViewTab('recommend');
+                                        else {
+                                            setViewTab('queue'); // fallback
+                                            setShowQueue(false);
+                                        }
+                                    } else {
+                                        clearSearch();
+                                    }
+                                 }}
                                  className="px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 text-white/50 hover:text-white hover:bg-white/5 transition-all shrink-0 border-r border-white/5 mr-1"
                              >
                                  <ArrowLeft className="w-4 h-4" />
                              </button>
-                             <button 
-                                 onClick={() => handleTabChange('playlist')}
-                                 className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'playlist' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
-                             >
-                                 <Grid className="w-4 h-4" /> 歌单
-                             </button>
-                             <button 
-                                 onClick={() => handleTabChange('song')}
-                                 className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'song' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
-                             >
-                                 <Mic2 className="w-4 h-4" /> 单曲
-                             </button>
-                             <button 
-                                 onClick={() => handleTabChange('artist')}
-                                 className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'artist' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
-                             >
-                                 <UserIcon className="w-4 h-4" /> 歌手
-                             </button>
+                             {viewTab === 'artist' ? (
+                                <div className="px-4 py-2 text-sm font-bold text-white flex items-center gap-2">
+                                    <UserIcon className="w-4 h-4" /> 歌手详情
+                                </div>
+                             ) : (
+                                <>
+                                    <button 
+                                        onClick={() => handleTabChange('playlist')}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'playlist' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                    >
+                                        <Grid className="w-4 h-4" /> 歌单
+                                    </button>
+                                    <button 
+                                        onClick={() => handleTabChange('song')}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'song' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                    >
+                                        <Mic2 className="w-4 h-4" /> 单曲
+                                    </button>
+                                    <button 
+                                        onClick={() => handleTabChange('artist')}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'artist' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                    >
+                                        <UserIcon className="w-4 h-4" /> 歌手
+                                    </button>
+                                </>
+                             )}
                            </>
                       ) : (
                           <>
@@ -747,7 +810,78 @@ const App: React.FC = () => {
   
               {/* Content Body */}
               <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth no-scrollbar">
-                  {viewTab === 'recommend' ? (
+                  {viewTab === 'artist' ? (
+                       // Artist Detail View
+                       <div className="max-w-5xl mx-auto space-y-8 pb-20">
+                           {/* Artist Header */}
+                           {!isArtistLoading && artistDetail && (
+                               <div className="flex flex-col md:flex-row items-center md:items-end gap-6 md:gap-8 pb-4 border-b border-white/5">
+                                   <div className="w-32 h-32 md:w-48 md:h-48 rounded-full overflow-hidden shadow-2xl border-4 border-white/5 shrink-0">
+                                       <img src={artistDetail.picUrl || artistDetail.cover} className="w-full h-full object-cover" />
+                                   </div>
+                                   <div className="flex-1 text-center md:text-left">
+                                       <h2 className="text-3xl md:text-5xl font-bold text-white mb-2">{artistDetail.name}</h2>
+                                       <p className="text-white/40 text-sm max-w-2xl line-clamp-2 md:line-clamp-3 mb-4">{artistDetail.briefDesc || '暂无简介'}</p>
+                                       
+                                       <div className="flex items-center justify-center md:justify-start gap-4">
+                                           <div className="flex bg-white/5 rounded-lg p-1">
+                                                <button 
+                                                    onClick={() => handleArtistSortChange('hot')}
+                                                    className={`px-4 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 transition-all ${artistSortOrder === 'hot' ? 'bg-white/20 text-white shadow-lg' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
+                                                >
+                                                    <Flame className="w-3 h-3" /> 最热歌曲
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleArtistSortChange('time')}
+                                                    className={`px-4 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 transition-all ${artistSortOrder === 'time' ? 'bg-white/20 text-white shadow-lg' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
+                                                >
+                                                    <Calendar className="w-3 h-3" /> 最新发布
+                                                </button>
+                                           </div>
+                                       </div>
+                                   </div>
+                               </div>
+                           )}
+
+                           {/* Artist Song List */}
+                           <div className="space-y-1">
+                                {isArtistLoading ? (
+                                     <div className="flex flex-col gap-4">
+                                        {Array(5).fill(0).map((_, i) => (
+                                            <div key={i} className="h-14 bg-white/5 rounded-lg animate-pulse" />
+                                        ))}
+                                     </div>
+                                ) : artistSongs.length > 0 ? (
+                                    artistSongs.map((track, i) => (
+                                        <div 
+                                            key={track.id} 
+                                            onClick={() => handleArtistSongClick(track)}
+                                            className="flex items-center gap-4 p-3 rounded-lg cursor-pointer group transition-all duration-300 hover:bg-white/5 text-white/60 hover:text-white"
+                                        >
+                                            <div className="w-8 text-center text-sm font-mono opacity-30">{i + 1}</div>
+                                            <div className="relative w-10 h-10 shrink-0">
+                                                <img src={track.al.picUrl || track.al.pic_str} loading="lazy" className="w-full h-full rounded-md object-cover shadow-sm" />
+                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center rounded-md transition-colors">
+                                                    <Play className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all fill-current" />
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                                <div className="text-sm font-medium truncate text-white/90">{track.name}</div>
+                                                <div className="text-xs truncate text-white/40 group-hover:text-white/60">{track.al.name}</div>
+                                            </div>
+
+                                            <div className="text-xs font-mono text-white/20 w-12 text-right group-hover:text-white/40">
+                                                {Math.floor(track.dt / 1000 / 60)}:{(Math.floor(track.dt / 1000) % 60).toString().padStart(2, '0')}
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-center py-20 opacity-40">该筛选下暂无歌曲</div>
+                                )}
+                           </div>
+                       </div>
+                  ) : viewTab === 'recommend' ? (
                       <div className="pb-20">
                           {isSearching && (
                               <h3 className="text-lg font-bold text-white mb-6">
@@ -845,7 +979,7 @@ const App: React.FC = () => {
                                                 <div className="aspect-square w-full rounded-full overflow-hidden relative shadow-lg bg-white/5">
                                                     <img src={artist.picUrl} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" loading="lazy" />
                                                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300 flex items-center justify-center">
-                                                         <Play className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all fill-current" />
+                                                         <UserIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all" />
                                                     </div>
                                                 </div>
                                                 <div className="text-center">
@@ -896,7 +1030,7 @@ const App: React.FC = () => {
           </div>
       </div>
     );
-  }, [showQueue, viewTab, recommendations, playlistSearchResults, songSearchResults, artistSearchResults, isSearching, searchType, isSearchLoading, playlist, currentIndex, tempPlaylistId, isPlaying]);
+  }, [showQueue, viewTab, recommendations, playlistSearchResults, songSearchResults, artistSearchResults, isSearching, searchType, isSearchLoading, isArtistLoading, artistDetail, artistSongs, artistSortOrder, playlist, currentIndex, tempPlaylistId, isPlaying]);
 
   const commentsDrawer = useMemo(() => (
       <>
@@ -1152,6 +1286,7 @@ const App: React.FC = () => {
         onToggleShuffle={handleToggleShuffle}
         isReverse={isReverse}
         onToggleReverse={handleToggleReverse}
+        onArtistClick={handlePlayerArtistClick}
       />
     </div>
   );

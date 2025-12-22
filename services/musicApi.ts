@@ -135,14 +135,42 @@ export const searchArtists = async (keywords: string): Promise<Artist[]> => {
   }
 };
 
-export const fetchArtistSongs = async (artistId: number): Promise<Track[]> => {
+// Fetch simplified top songs (fallback)
+export const fetchArtistTopSongs = async (artistId: number): Promise<Track[]> => {
   try {
     const data = await fetchWithFailover(`/artist/top/song?id=${artistId}`);
     return data.songs || [];
   } catch (e) {
-    console.error("Failed to fetch artist songs", e);
+    console.error("Failed to fetch artist top songs", e);
     throw e;
   }
+};
+
+// Fetch artist detail (for profile info)
+export const fetchArtistDetail = async (artistId: number): Promise<any> => {
+    try {
+        const data = await fetchWithFailover(`/artist/detail?id=${artistId}`);
+        return data.data?.artist || data.artist || {};
+    } catch (e) {
+        console.warn("Failed to fetch artist detail", e);
+        return {};
+    }
+};
+
+// Fetch all songs with sorting (hot/time)
+export const fetchArtistSongsList = async (artistId: number, order: 'hot' | 'time', limit = 100): Promise<Track[]> => {
+    try {
+        // /artist/songs exists on Netease API to get songs with order
+        const data = await fetchWithFailover(`/artist/songs?id=${artistId}&order=${order}&limit=${limit}`);
+        return data.songs || [];
+    } catch (e) {
+        // Fallback to top songs if 'hot' and fetching list fails
+        if (order === 'hot') {
+            return fetchArtistTopSongs(artistId);
+        }
+        console.warn("Failed to fetch artist songs list", e);
+        return [];
+    }
 };
 
 export const getAudioUrl = async (id: number): Promise<string> => {
