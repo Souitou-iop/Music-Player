@@ -4,7 +4,7 @@ import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments } from './servic
 import { Track, LyricLine, Comment } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
 import { APP_VERSION, DEFAULT_VOLUME } from './constants';
-import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle } from 'lucide-react';
+import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw } from 'lucide-react';
 
 const DEFAULT_PLAYLIST_ID = '833444858'; 
 
@@ -36,6 +36,7 @@ const App: React.FC = () => {
   // View State
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [isRefreshingComments, setIsRefreshingComments] = useState(false);
   const [dominantColor, setDominantColor] = useState('20, 20, 20');
   
   // UI Toggles
@@ -283,6 +284,20 @@ const App: React.FC = () => {
       }
   }, []);
 
+  const handleRefreshComments = useCallback(async () => {
+      if (!currentTrack) return;
+      setIsRefreshingComments(true);
+      try {
+          // api handles cache busting via timestamp
+          const data = await fetchComments(currentTrack.id);
+          setComments(data);
+      } catch (e) {
+          console.error("Failed to refresh comments", e);
+      } finally {
+          setTimeout(() => setIsRefreshingComments(false), 500);
+      }
+  }, [currentTrack]);
+
   useEffect(() => {
       if (audioRef.current) audioRef.current.volume = volume;
       localStorage.setItem('vinyl_volume', volume.toString());
@@ -404,7 +419,18 @@ const App: React.FC = () => {
             <div className="flex flex-col h-full">
                 <div className={`p-6 pt-8 border-b flex items-center justify-between ${transitionClass} ${isDarkMode ? 'border-white/5' : 'border-black/5'}`}>
                     <h2 className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5" /> 精选评论</h2>
-                    <button onClick={() => setShowComments(false)} className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}><X className="w-4 h-4" /></button>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={handleRefreshComments} 
+                            className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}
+                            title="刷新评论"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${isRefreshingComments ? 'animate-spin' : ''}`} />
+                        </button>
+                        <button onClick={() => setShowComments(false)} className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}>
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {comments.length > 0 ? comments.map(c => (
@@ -427,7 +453,7 @@ const App: React.FC = () => {
                 </div>
             </div>
       </div>
-  ), [showComments, comments, isDarkMode, drawerBg, drawerBorder, textColor]);
+  ), [showComments, comments, isDarkMode, drawerBg, drawerBorder, textColor, isRefreshingComments, handleRefreshComments]);
 
   // --- Optimization: Album Art Component (Prevent Re-render) ---
   const AlbumArt = useMemo(() => (
@@ -458,6 +484,55 @@ const App: React.FC = () => {
 
   if (isLoading) {
       return <div className="h-screen w-screen flex items-center justify-center bg-black text-white"><Loader2 className="animate-spin w-10 h-10" /></div>;
+  }
+
+  // --- ERROR STATE: Handle failed playlist load gracefully ---
+  if (playlist.length === 0) {
+       return (
+          <div className={`h-screen w-screen flex flex-col items-center justify-center relative overflow-hidden ${isDarkMode ? 'bg-black text-white' : 'bg-[#f5f5f7] text-black'}`}>
+               <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ background: `radial-gradient(circle at 50% 50%, #555, transparent 70%)` }} />
+               
+               <div className="z-10 flex flex-col items-center gap-6 p-8 max-w-md w-full text-center">
+                   <div className="w-20 h-20 rounded-2xl bg-neutral-800/50 flex items-center justify-center mb-2">
+                        <AlertCircle className="w-10 h-10 text-red-500" />
+                   </div>
+                   
+                   <div>
+                       <h2 className="text-2xl font-bold mb-2">加载失败</h2>
+                       <p className="opacity-60 text-sm leading-relaxed">
+                           {playError || "无法连接到音乐服务，请检查网络或稍后重试。"}
+                       </p>
+                   </div>
+
+                   <button 
+                       onClick={() => loadPlaylistData(playlistId)}
+                       className={`px-8 py-3 rounded-full font-bold text-sm transition-transform active:scale-95 ${isDarkMode ? 'bg-white text-black hover:bg-neutral-200' : 'bg-black text-white hover:bg-neutral-800'}`}
+                   >
+                       重新加载
+                   </button>
+                   
+                   <div className="w-full h-px bg-white/10 my-2" />
+                   
+                   <form onSubmit={handlePlaylistSubmit} className="w-full">
+                       <p className="text-xs opacity-50 mb-3 text-left">尝试其他歌单 ID</p>
+                       <div className="relative">
+                            <input 
+                                value={tempPlaylistId}
+                                onChange={(e) => setTempPlaylistId(e.target.value)}
+                                placeholder="输入歌单 ID..."
+                                className={`w-full border rounded-lg py-3 pl-4 pr-12 text-sm focus:outline-none ${isDarkMode ? 'bg-white/10 border-white/10 focus:border-white/30 text-white' : 'bg-black/5 border-black/10 focus:border-black/20 text-black'}`}
+                            />
+                            <button type="submit" className="absolute right-2 top-2 p-1 rounded-md opacity-60 hover:opacity-100">
+                                <Search className="w-5 h-5" />
+                            </button>
+                       </div>
+                   </form>
+               </div>
+               
+               {/* Version */}
+               <div className="absolute bottom-4 opacity-30 text-xs font-mono">v{APP_VERSION}</div>
+          </div>
+       );
   }
 
   return (

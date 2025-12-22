@@ -4,15 +4,16 @@ import { Track, LyricLine, Comment } from '../types';
 // Use a rotating set of public APIs to improve stability
 // Updated list with more reliable Vercel deployments and public instances
 const API_BASES = [
-  'https://ncmapi.redd.one', // Often reliable
-  'https://netease-cloud-music-api-anon.vercel.app',
-  'https://netease-cloud-music-api-demo.vercel.app',
+  'https://netease-cloud-music-api-anon.vercel.app', // Highly reliable
   'https://music.cyrilstudio.top',
   'https://api-music.imsyy.top',
-  'https://netease-cloud-music-api-gamma-sage.vercel.app',
+  'https://netease-cloud-music-api-demo.vercel.app',
   'https://music-api.heheda.top',
+  'https://ncmapi.redd.one', // Sometimes slow
   'https://ncm.cloud.zlib.cn',
-  'https://netease-cloud-music-api-psi-topaz.vercel.app'
+  // New backups
+  'https://netease-cloud-music-api-git-main-fe-canvas.vercel.app',
+  'https://music-api-theta-liart.vercel.app'
 ];
 
 // Helper to try multiple endpoints
@@ -24,9 +25,8 @@ const fetchWithFailover = async (path: string): Promise<any> => {
   for (const base of validBases) {
     try {
       const controller = new AbortController();
-      // OPTIMIZATION: Reduced timeout from 15s to 3s. 
-      // Fail fast is better than waiting on a dead mirror.
-      const timeoutId = setTimeout(() => controller.abort(), 3000); 
+      // Increased timeout to 8s to handle slower public instances / cold starts
+      const timeoutId = setTimeout(() => controller.abort(), 8000); 
 
       // Add timestamp to prevent caching which can cause stale errors
       const separator = path.includes('?') ? '&' : '?';

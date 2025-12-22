@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, SkipForward, SkipBack, Volume2, ListMusic, MessageSquare, Moon, Sun, Monitor, Laptop } from 'lucide-react';
 import { Track } from '../types';
 import { ThemeMode } from '../App';
@@ -29,6 +29,11 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 }) => {
   
   const [animatingTheme, setAnimatingTheme] = useState(false);
+  
+  // Dragging State
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragTime, setDragTime] = useState(0);
+  const progressBarRef = useRef<HTMLDivElement>(null);
 
   // Trigger animation state on theme change
   useEffect(() => {
@@ -37,15 +42,61 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     return () => clearTimeout(timer);
   }, [themeMode]);
 
+  // --- Dragging Logic ---
+  const calculateTimeFromEvent = (clientX: number) => {
+    if (!progressBarRef.current || !duration) return 0;
+    const rect = progressBarRef.current.getBoundingClientRect();
+    // Calculate percentage (0 to 1), clamped
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * duration;
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    // Prevent default browser dragging of the element
+    e.preventDefault();
+    setIsDragging(true);
+    
+    // Immediately update visual position to where user clicked
+    const newTime = calculateTimeFromEvent(e.clientX);
+    setDragTime(newTime);
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const newTime = calculateTimeFromEvent(e.clientX);
+      setDragTime(newTime);
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      const newTime = calculateTimeFromEvent(e.clientX);
+      // Commit the seek operation only when release
+      onSeek(newTime);
+      setIsDragging(false);
+    };
+
+    // Attach to window to handle drags that go outside the element
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [isDragging, duration, onSeek]);
+
+  // Determine what to display: current playback time OR dragging time
+  const effectiveTime = isDragging ? dragTime : currentTime;
+  const progressPercent = duration ? (effectiveTime / duration) * 100 : 0;
+
   const formatTime = (ms: number) => {
-    if (!ms) return "0:00";
+    if (!ms && ms !== 0) return "0:00";
     const totalSeconds = Math.floor(ms / 1000);
     const m = Math.floor(totalSeconds / 60);
     const s = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
   };
-
-  const progressPercent = duration ? (currentTime / duration) * 100 : 0;
   
   // Theme Colors
   const transitionClass = "transition-[color,background-color,border-color,opacity,shadow,transform,filter] duration-500 ease-[cubic-bezier(0.2,0,0,1)]";
@@ -105,22 +156,25 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                 
                 {/* Scrubber */}
                 <div className={`w-full flex items-center gap-3 text-[10px] font-medium tracking-wide ${transitionClass} ${isDarkMode ? 'text-white/40' : 'text-slate-400'}`}>
-                    <span className="w-8 text-right tabular-nums">{formatTime(currentTime)}</span>
+                    <span className="w-8 text-right tabular-nums">{formatTime(effectiveTime)}</span>
                     <div 
-                        className="flex-1 h-1 rounded-full relative group cursor-pointer bg-current opacity-20"
-                        onClick={(e) => {
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            const p = (e.clientX - rect.left) / rect.width;
-                            onSeek(p * duration);
-                        }}
+                        ref={progressBarRef}
+                        className="flex-1 h-1 rounded-full relative group cursor-pointer bg-current opacity-20 touch-none" // Added touch-none for mobile scrubbing
+                        onPointerDown={handlePointerDown}
                     >
-                        {/* Hover Hit Area */}
-                        <div className="absolute -top-2 -bottom-2 inset-x-0 bg-transparent z-10" />
+                        {/* Hover Hit Area - Increased for better usability */}
+                        <div className="absolute -top-3 -bottom-3 inset-x-0 bg-transparent z-10" />
                         
                         {/* Fill */}
-                        <div className={`h-full rounded-full relative ${transitionClass} ${isDarkMode ? 'bg-white/40 group-hover:bg-white' : 'bg-black/40 group-hover:bg-black'}`} style={{ width: `${progressPercent}%` }}>
+                        <div 
+                            className={`h-full rounded-full relative ${transitionClass} ${isDarkMode ? 'bg-white/40 group-hover:bg-white' : 'bg-black/40 group-hover:bg-black'} ${isDragging ? (isDarkMode ? '!bg-white' : '!bg-black') + ' !opacity-100' : ''}`} 
+                            style={{ width: `${progressPercent}%` }}
+                        >
                              {/* Thumb */}
-                            <div className={`absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-sm opacity-0 group-hover:opacity-100 scale-50 group-hover:scale-100 transition-all duration-200 ${isDarkMode ? 'bg-white' : 'bg-black'}`} />
+                            <div 
+                                className={`absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-sm transition-all duration-200 ${isDarkMode ? 'bg-white' : 'bg-black'} 
+                                ${isDragging ? 'opacity-100 scale-125' : 'opacity-0 group-hover:opacity-100 scale-50 group-hover:scale-100'}`} 
+                            />
                         </div>
                     </div>
                     <span className="w-8 tabular-nums">{formatTime(duration)}</span>
@@ -128,7 +182,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             </div>
 
             {/* 3. Volume & Tools (Right) */}
-            <div className="w-[25%] flex items-center justify-end gap-4">
+            <div className="w-[25%] flex items-center justify-end gap-5">
                 {/* Theme Toggle Button (Refined Animation) */}
                 <button 
                     onClick={onToggleTheme}
@@ -141,8 +195,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                        {themeMode === 'system' && <Laptop className="w-full h-full" />}
                    </div>
                 </button>
-
-                <div className="h-4 w-[1px] bg-current opacity-10 mx-1"></div>
 
                 <button 
                     onClick={onToggleComments} 
