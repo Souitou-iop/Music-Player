@@ -710,8 +710,15 @@ const App: React.FC = () => {
                             
                             {line.trans && (
                                 <p 
-                                    className={`font-medium mt-3 opacity-90 transition-colors duration-300 ${isDarkMode ? 'text-white/80' : 'text-black/80'}`} 
-                                    style={{ fontSize: '1.4em' }}
+                                    className={`font-medium mt-2 leading-tight transition-all duration-300 ${
+                                        isActive 
+                                            ? (isDarkMode ? 'text-white/60' : 'text-black/60') 
+                                            : (isDarkMode ? 'text-white/30' : 'text-black/30')
+                                    } ${
+                                        isActive 
+                                            ? 'text-lg lg:text-2xl' 
+                                            : 'text-sm lg:text-lg'
+                                    }`} 
                                 >
                                     {line.trans}
                                 </p>
