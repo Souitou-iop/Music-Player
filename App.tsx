@@ -848,7 +848,7 @@ const App: React.FC = () => {
                                 {isArtistLoading ? (
                                      <div className="flex flex-col gap-4">
                                         {Array(5).fill(0).map((_, i) => (
-                                            <div key={i} className="h-14 bg-white/5 rounded-lg animate-pulse" />
+                                            <div key={i} className="h-14 bg-white/10 rounded-lg" />
                                         ))}
                                      </div>
                                 ) : artistSongs.length > 0 ? (
@@ -901,9 +901,9 @@ const App: React.FC = () => {
                                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-8">
                                         {showSkeleton ? (
                                             Array(10).fill(0).map((_, i) => (
-                                                <div key={i} className="flex flex-col gap-3 animate-pulse">
-                                                    <div className="aspect-square rounded-xl bg-white/5" />
-                                                    <div className="h-4 bg-white/5 rounded w-3/4" />
+                                                <div key={i} className="flex flex-col gap-3">
+                                                    <div className="aspect-square rounded-xl bg-white/10" />
+                                                    <div className="h-4 bg-white/10 rounded w-3/4" />
                                                 </div>
                                             ))
                                         ) : (
