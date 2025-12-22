@@ -23,6 +23,7 @@ export interface LyricLine {
   text: string;
   trans?: string;
   duration: number; // Duration of the line in ms
+  isContinuation?: boolean;
 }
 
 export interface User {

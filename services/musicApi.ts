@@ -44,15 +44,7 @@ export const fetchPlaylist = async (id: string): Promise<Track[]> => {
 };
 
 export const getAudioUrl = async (id: number): Promise<string> => {
-  // Strategy: Use the official Netease "outer" link chain.
-  // This is a 302 redirect. Browsers can handle this if strict crossOrigin checks are disabled on the audio tag.
-  // We append a random timestamp to prevent the browser from caching a previous 404/403 response.
   return `https://music.163.com/song/media/outer/url?id=${id}.mp3&t=${Date.now()}`;
-};
-
-// Deprecated
-export const fetchSongUrl = (id: number): string => {
-  return `https://music.163.com/song/media/outer/url?id=${id}.mp3`;
 };
 
 const parseLrc = (lrc: string): { time: number; text: string }[] => {
@@ -77,6 +69,9 @@ const parseLrc = (lrc: string): { time: number; text: string }[] => {
   return result;
 };
 
+// Split configuration
+const CHAR_LIMIT = 30; // Maximum characters per line before splitting
+
 export const fetchLyrics = async (id: number): Promise<LyricLine[]> => {
   try {
     const data = await fetchWithFailover(`/lyric?id=${id}`);
@@ -84,15 +79,12 @@ export const fetchLyrics = async (id: number): Promise<LyricLine[]> => {
     const original = data.lrc?.lyric ? parseLrc(data.lrc.lyric) : [];
     const translation = data.tlyric?.lyric ? parseLrc(data.tlyric.lyric) : [];
 
-    // Map and calculate duration
-    return original.map((line, index) => {
-      // Calculate duration based on next line's time
+    // Step 1: Calculate basic durations and map translations
+    const rawLines = original.map((line, index) => {
       const nextLine = original[index + 1];
       const rawDuration = nextLine ? nextLine.time - line.time : 5000;
-      // Min duration 400ms to prevent visual glitching
       const duration = Math.max(400, rawDuration); 
 
-      // Find matching translation (rough match within 500ms)
       const transLine = translation.find(t => Math.abs(t.time - line.time) < 500);
       
       return {
@@ -101,6 +93,70 @@ export const fetchLyrics = async (id: number): Promise<LyricLine[]> => {
         trans: transLine?.text
       };
     });
+
+    // Step 2: Split long lines
+    const processedLines: LyricLine[] = [];
+    
+    for (const line of rawLines) {
+      // Check if line needs splitting
+      if (line.text.length > CHAR_LIMIT) {
+        const parts: string[] = [];
+        let remaining = line.text;
+        
+        while (remaining.length > CHAR_LIMIT) {
+          // Find split point: prefer spaces near the limit, otherwise hard break
+          let splitIdx = -1;
+          const searchWindowStart = Math.max(0, CHAR_LIMIT - 10);
+          const searchWindowEnd = Math.min(remaining.length, CHAR_LIMIT + 5);
+          
+          // Look for space in the window
+          const lastSpace = remaining.lastIndexOf(' ', searchWindowEnd);
+          if (lastSpace >= searchWindowStart) {
+            splitIdx = lastSpace;
+          } else {
+             // Look for comma or punctuation if strict space fails (for Chinese)
+             const lastPunct = Math.max(
+                remaining.lastIndexOf('，', searchWindowEnd),
+                remaining.lastIndexOf(',', searchWindowEnd)
+             );
+             if (lastPunct >= searchWindowStart) {
+                splitIdx = lastPunct + 1; // Include punctuation in first part
+             } else {
+                splitIdx = CHAR_LIMIT; // Hard limit
+             }
+          }
+          
+          parts.push(remaining.substring(0, splitIdx).trim());
+          remaining = remaining.substring(splitIdx).trim();
+        }
+        if (remaining) parts.push(remaining);
+
+        // Distribute duration proportionally
+        const totalLen = line.text.length;
+        let accumulatedTime = 0;
+        
+        parts.forEach((partText, idx) => {
+          const isLast = idx === parts.length - 1;
+          const partDuration = Math.floor(line.duration * (partText.length / totalLen));
+          
+          processedLines.push({
+            time: line.time + accumulatedTime,
+            text: partText,
+            trans: isLast ? line.trans : undefined, // Only show translation on the last part
+            duration: isLast ? (line.duration - accumulatedTime) : partDuration, // Ensure exact total duration
+            isContinuation: idx > 0
+          });
+          
+          accumulatedTime += partDuration;
+        });
+
+      } else {
+        processedLines.push({ ...line, isContinuation: false });
+      }
+    }
+
+    return processedLines;
+
   } catch (e) {
     console.warn("No lyrics found");
     return [];
