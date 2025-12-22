@@ -59,7 +59,8 @@ const fetchWithFailover = async (path: string): Promise<any> => {
 
 export const fetchPlaylist = async (id: string): Promise<Track[]> => {
   try {
-    const data = await fetchWithFailover(`/playlist/track/all?id=${id}&limit=50&offset=0`);
+    // UPDATED: Increased limit from 50 to 200
+    const data = await fetchWithFailover(`/playlist/track/all?id=${id}&limit=200&offset=0`);
     return data.songs || [];
   } catch (e) {
     console.error("Failed to fetch playlist", e);
@@ -110,7 +111,8 @@ export const searchSongs = async (keywords: string): Promise<Track[]> => {
       name: s.name,
       ar: s.ar || s.artists || [], // Handle potential API inconsistencies
       al: s.al || s.album || { picUrl: '' },
-      dt: s.dt || s.duration || 0
+      dt: s.dt || s.duration || 0,
+      fee: s.fee // UPDATED: Map fee field
     }));
   } catch (e) {
     console.warn("Failed to search songs", e);

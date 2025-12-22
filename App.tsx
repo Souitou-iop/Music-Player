@@ -720,9 +720,8 @@ const App: React.FC = () => {
               {/* Header / Tabs / Search */}
               <div className="flex-none p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row gap-4 items-center justify-between bg-black/20">
                    {/* Tabs / Back Button */}
-                   <div className="flex bg-black/30 p-1 rounded-lg self-start md:self-auto w-full md:w-auto overflow-x-auto no-scrollbar items-center">
-                      {isSearching || viewTab === 'artist' ? (
-                           <>
+                   {isSearching || viewTab === 'artist' ? (
+                       <div className="flex bg-black/30 p-1 rounded-lg self-start md:self-auto w-full md:w-auto overflow-x-auto no-scrollbar items-center">
                              <button 
                                  onClick={() => {
                                     if (viewTab === 'artist') {
@@ -748,42 +747,49 @@ const App: React.FC = () => {
                                 <>
                                     <button 
                                         onClick={() => handleTabChange('playlist')}
-                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'playlist' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'playlist' ? 'bg-white/10 text-white shadow-lg border-white/5' : 'border-transparent text-white/50 hover:text-white hover:bg-white/5'}`}
                                     >
                                         <Grid className="w-4 h-4" /> 歌单
                                     </button>
                                     <button 
                                         onClick={() => handleTabChange('song')}
-                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'song' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'song' ? 'bg-white/10 text-white shadow-lg border-white/5' : 'border-transparent text-white/50 hover:text-white hover:bg-white/5'}`}
                                     >
                                         <Mic2 className="w-4 h-4" /> 单曲
                                     </button>
                                     <button 
                                         onClick={() => handleTabChange('artist')}
-                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 ${searchType === 'artist' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'artist' ? 'bg-white/10 text-white shadow-lg border-white/5' : 'border-transparent text-white/50 hover:text-white hover:bg-white/5'}`}
                                     >
                                         <UserIcon className="w-4 h-4" /> 歌手
                                     </button>
                                 </>
                              )}
-                           </>
-                      ) : (
-                          <>
+                       </div>
+                   ) : (
+                      <div className="relative flex bg-black/30 p-1 rounded-lg self-start md:self-auto w-full md:w-auto md:min-w-[340px] items-center isolate">
+                            {/* Animated Background Pill */}
+                            <div 
+                                className="absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] bg-white/10 border border-white/5 shadow-lg rounded-md transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] -z-10"
+                                style={{
+                                    transform: viewTab === 'queue' ? 'translateX(100%)' : 'translateX(0%)'
+                                }}
+                            />
+                            
                             <button 
                                 onClick={() => setViewTab('recommend')}
-                                className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${viewTab === 'recommend' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'recommend' ? 'text-white' : 'text-white/40 hover:text-white/60'}`}
                             >
                                 <Grid className="w-4 h-4" /> 推荐歌单
                             </button>
                             <button 
                                 onClick={() => setViewTab('queue')}
-                                className={`flex-1 md:flex-none px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${viewTab === 'queue' ? 'bg-white/10 text-white shadow-lg border border-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+                                className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'queue' ? 'text-white' : 'text-white/40 hover:text-white/60'}`}
                             >
                                 <ListMusic className="w-4 h-4" /> 当前播放 ({playlist.length})
                             </button>
-                          </>
-                      )}
-                   </div>
+                      </div>
+                   )}
   
                    <div className="flex gap-4 w-full md:w-auto items-center">
                        {/* Search Input */}
@@ -867,7 +873,13 @@ const App: React.FC = () => {
                                             </div>
                                             
                                             <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                                <div className="text-sm font-medium truncate text-white/90">{track.name}</div>
+                                                {/* VIP Badge Added here */}
+                                                <div className="text-sm font-medium truncate text-white/90 flex items-center gap-2">
+                                                    {track.name}
+                                                    {(track.fee === 1 || track.fee === 4) && (
+                                                        <span className="text-[9px] px-1 rounded-[3px] border border-amber-500 text-amber-500 font-normal leading-tight opacity-90 scale-90 origin-left shrink-0">VIP</span>
+                                                    )}
+                                                </div>
                                                 <div className="text-xs truncate text-white/40 group-hover:text-white/60">{track.al.name}</div>
                                             </div>
 
@@ -953,7 +965,13 @@ const App: React.FC = () => {
                                                 </div>
                                                 
                                                 <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                                    <div className="text-base font-medium truncate text-white/90">{track.name}</div>
+                                                    {/* VIP Badge Added here for Search */}
+                                                    <div className="text-base font-medium truncate text-white/90 flex items-center gap-2">
+                                                        {track.name}
+                                                        {(track.fee === 1 || track.fee === 4) && (
+                                                            <span className="text-[10px] px-1 rounded-[3px] border border-amber-500 text-amber-500 font-normal leading-tight opacity-90 scale-90 origin-left shrink-0">VIP</span>
+                                                        )}
+                                                    </div>
                                                     <div className="text-xs truncate text-white/40 group-hover:text-white/60">
                                                         {Array.isArray(track.ar) ? track.ar.map((a:any) => a.name).join(', ') : 'Unknown'}
                                                     </div>
@@ -1014,7 +1032,13 @@ const App: React.FC = () => {
                                   </div>
                                   
                                   <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                      <div className={`text-base font-medium truncate ${i === currentIndex ? 'text-white' : 'text-white/90'}`}>{track.name}</div>
+                                      {/* VIP Badge Added here for Main Queue */}
+                                      <div className={`text-base font-medium truncate flex items-center gap-2 ${i === currentIndex ? 'text-white' : 'text-white/90'}`}>
+                                          {track.name}
+                                          {(track.fee === 1 || track.fee === 4) && (
+                                              <span className="text-[10px] px-1 rounded-[3px] border border-amber-500 text-amber-500 font-normal leading-tight opacity-90 scale-90 origin-left shrink-0">VIP</span>
+                                          )}
+                                      </div>
                                       <div className="text-xs truncate text-white/40 group-hover:text-white/60">{track.ar.map(a => a.name).join(', ')}</div>
                                   </div>
 

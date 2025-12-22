@@ -19,6 +19,7 @@ export interface Track {
   ar: Artist[];
   al: Album;
   dt: number; // Duration in ms
+  fee?: number; // 0: Free, 1: VIP, 4: Paid Album, 8: Sq
 }
 
 export interface LyricLine {
