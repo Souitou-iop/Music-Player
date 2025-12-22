@@ -24,8 +24,9 @@ const fetchWithFailover = async (path: string): Promise<any> => {
   for (const base of validBases) {
     try {
       const controller = new AbortController();
-      // Increased timeout to 15s to handle slower public instances / cold starts
-      const timeoutId = setTimeout(() => controller.abort(), 15000); 
+      // OPTIMIZATION: Reduced timeout from 15s to 3s. 
+      // Fail fast is better than waiting on a dead mirror.
+      const timeoutId = setTimeout(() => controller.abort(), 3000); 
 
       // Add timestamp to prevent caching which can cause stale errors
       const separator = path.includes('?') ? '&' : '?';

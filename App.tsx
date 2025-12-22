@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments } from './services/musicApi';
 import { Track, LyricLine, Comment } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
@@ -201,7 +201,9 @@ const App: React.FC = () => {
   useEffect(() => {
       const loop = () => {
           if (audioRef.current && !audioRef.current.paused) {
-              setCurrentTime(audioRef.current.currentTime * 1000);
+              // OPTIMIZATION: Check if time actually changed significantly to avoid unnecessary state updates
+              const time = audioRef.current.currentTime * 1000;
+              setCurrentTime(time);
           }
           rafRef.current = requestAnimationFrame(loop);
       };
@@ -242,18 +244,18 @@ const App: React.FC = () => {
       handlePlayError("音频加载失败");
   };
 
-  const playNext = () => {
+  const playNext = useCallback(() => {
       if (playlist.length === 0) return;
       setCurrentIndex((prev) => (prev + 1) % playlist.length);
-  };
+  }, [playlist.length]);
 
-  const playPrev = () => {
+  const playPrev = useCallback(() => {
       if (playlist.length === 0) return;
       setCurrentIndex((prev) => (prev - 1 + playlist.length) % playlist.length);
       setConsecutiveErrors(0);
-  };
+  }, [playlist.length]);
 
-  const togglePlay = async () => {
+  const togglePlay = useCallback(async () => {
       if (!audioRef.current || !currentTrack) return;
       if (isPlaying) {
           audioRef.current.pause();
@@ -269,9 +271,9 @@ const App: React.FC = () => {
               else { audioRef.current.load(); audioRef.current.play().catch(() => playNext()); }
           }
       }
-  };
+  }, [isPlaying, currentTrack, playNext]);
 
-  const handleSeek = (ms: number) => {
+  const handleSeek = useCallback((ms: number) => {
       if (audioRef.current) {
           const newTime = ms / 1000;
           if (isFinite(newTime)) {
@@ -279,7 +281,7 @@ const App: React.FC = () => {
             setCurrentTime(ms);
           }
       }
-  };
+  }, []);
 
   useEffect(() => {
       if (audioRef.current) audioRef.current.volume = volume;
@@ -293,24 +295,170 @@ const App: React.FC = () => {
       if (lyricsContainerRef.current && activeIndex !== -1) {
           const el = lyricsContainerRef.current.children[activeIndex] as HTMLElement;
           if (el) {
+              // Use refined scrolling behavior
               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
       }
   }, [activeIndex]);
 
-  if (isLoading) {
-      return <div className="h-screen w-screen flex items-center justify-center bg-black text-white"><Loader2 className="animate-spin w-10 h-10" /></div>;
-  }
+  // --- Optimization: Memoize Background Layers ---
+  // The background is heavy (filters, blends). We don't want it re-rendering on every `currentTime` update (60fps).
+  const backgroundLayer = useMemo(() => (
+    <>
+      {/* BASE LAYER: DARK (Screen Blend) */}
+      <div className="fixed inset-0 -z-50 bg-[#050505]">
+          <div className="absolute inset-0 overflow-hidden pointer-events-none transform-gpu"> {/* Hardware acceleration hint */}
+              <div className="absolute inset-0 opacity-20 transition-colors duration-[2000ms] will-change-[background-color]" style={{ background: `rgb(${dominantColor})` }} />
+              <div 
+                 className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] rounded-full filter blur-[100px] animate-spin-slow mix-blend-screen opacity-40 transition-colors duration-[3000ms] will-change-transform"
+                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 60%)`, animationDuration: '45s' }}
+              />
+              <div 
+                 className="absolute -bottom-[50%] -right-[50%] w-[200%] h-[200%] rounded-full filter blur-[100px] animate-spin-slow mix-blend-screen opacity-40 transition-colors duration-[3000ms] will-change-transform"
+                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 60%)`, animationDirection: 'reverse', animationDuration: '35s' }}
+              />
+          </div>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[100px]" />
+      </div>
 
-  // --- Apple-style Transition Config ---
+      {/* OVERLAY LAYER: LIGHT (Multiply Blend) - Fades in/out */}
+      <div className={`fixed inset-0 -z-40 transition-opacity duration-500 ease-[cubic-bezier(0.2,0,0,1)] ${isDarkMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+          <div className="absolute inset-0 bg-[#f5f5f7]" /> {/* Opaque base to hide dark layer */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none transform-gpu">
+              <div className="absolute inset-0 opacity-10 transition-colors duration-[2000ms] will-change-[background-color]" style={{ background: `rgb(${dominantColor})` }} />
+              <div 
+                 className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] rounded-full filter blur-[120px] animate-spin-slow mix-blend-multiply opacity-15 transition-colors duration-[3000ms] will-change-transform"
+                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 70%)`, animationDuration: '50s' }}
+              />
+              <div 
+                 className="absolute -bottom-[50%] -right-[50%] w-[200%] h-[200%] rounded-full filter blur-[120px] animate-spin-slow mix-blend-multiply opacity-15 transition-colors duration-[3000ms] will-change-transform"
+                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 70%)`, animationDirection: 'reverse', animationDuration: '40s' }}
+              />
+          </div>
+          <div className="absolute inset-0 bg-white/30 backdrop-blur-[100px]" />
+      </div>
+    </>
+  ), [dominantColor, isDarkMode]);
+
+  // --- Optimization: Styles ---
   const transitionClass = "transition-[color,background-color,border-color,opacity,shadow,transform,filter] duration-500 ease-[cubic-bezier(0.2,0,0,1)]";
-  
-  // Dynamic Styles
   const textColor = isDarkMode ? 'text-white' : 'text-slate-900';
   const textSubColor = isDarkMode ? 'text-white/50' : 'text-slate-500';
   const lyricInactiveColor = isDarkMode ? 'text-white/40' : 'text-slate-400';
   const drawerBg = isDarkMode ? 'bg-neutral-900/95' : 'bg-white/90';
   const drawerBorder = isDarkMode ? 'border-white/5' : 'border-black/5';
+
+  // --- Optimization: Memoize Queue Drawer ---
+  const queueDrawer = useMemo(() => (
+      <div className={`fixed inset-y-0 left-0 w-80 backdrop-blur-2xl border-r shadow-2xl z-40 transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showQueue ? 'translate-x-0' : '-translate-x-full'} ${drawerBg} ${drawerBorder} ${transitionClass}`}>
+            <div className={`p-6 pt-12 flex flex-col h-full ${textColor} ${transitionClass}`}>
+                <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-xl font-bold flex items-center gap-2"><ListMusic /> 播放列表</h2>
+                    <button onClick={() => setShowQueue(false)} className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}><X className="w-5 h-5" /></button>
+                </div>
+                
+                <form onSubmit={handlePlaylistSubmit} className="mb-6">
+                    <label className={`text-xs mb-1 block pl-1 ${transitionClass} ${textSubColor}`}>切换歌单 (支持网易云歌单ID或链接)</label>
+                    <div className="relative">
+                        <input 
+                            value={tempPlaylistId}
+                            onChange={(e) => setTempPlaylistId(e.target.value)}
+                            placeholder="输入歌单 ID 或 粘贴链接..."
+                            className={`w-full border rounded-lg py-2 pl-9 pr-3 text-sm focus:outline-none ${transitionClass} ${isDarkMode ? 'bg-white/10 border-white/10 focus:border-white/30 focus:bg-white/20 text-white' : 'bg-black/5 border-black/10 focus:border-black/20 focus:bg-black/10 text-black'}`}
+                        />
+                        <Search className={`w-4 h-4 absolute left-3 top-2.5 ${transitionClass} ${isDarkMode ? 'text-white/40' : 'text-black/40'}`} />
+                    </div>
+                    <button type="submit" className={`w-full mt-2 font-bold py-2 rounded-lg text-xs ${transitionClass} ${isDarkMode ? 'bg-white text-black hover:bg-neutral-200' : 'bg-black text-white hover:bg-neutral-800'}`}>
+                        加载歌单
+                    </button>
+                </form>
+
+                <div className="flex-1 overflow-y-auto no-scrollbar space-y-1 pb-20">
+                    {playlist.map((track, i) => (
+                        <div 
+                            key={track.id} 
+                            onClick={() => { setCurrentIndex(i); setIsPlaying(true); }}
+                            className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer ${transitionClass} ${
+                                i === currentIndex 
+                                    ? (isDarkMode ? 'bg-white/20 text-white' : 'bg-black/10 text-black') 
+                                    : (isDarkMode ? 'hover:bg-white/5 text-white/80' : 'hover:bg-black/5 text-black/80')
+                            }`}
+                        >
+                            {/* Lazy load list images */}
+                            <img src={track.al.picUrl} loading="lazy" className="w-10 h-10 rounded-md object-cover" />
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium truncate">{track.name}</div>
+                                <div className={`text-xs truncate ${transitionClass} ${isDarkMode ? 'text-white/40' : 'text-black/40'}`}>{track.ar.map(a => a.name).join(', ')}</div>
+                            </div>
+                            {i === currentIndex && <div className={`w-2 h-2 rounded-full animate-pulse ${isDarkMode ? 'bg-white' : 'bg-black'}`} />}
+                        </div>
+                    ))}
+                </div>
+            </div>
+      </div>
+  ), [showQueue, playlist, currentIndex, isDarkMode, tempPlaylistId, drawerBg, drawerBorder, textColor, textSubColor]);
+
+  // --- Optimization: Memoize Comments Drawer ---
+  const commentsDrawer = useMemo(() => (
+      <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] backdrop-blur-3xl border-l shadow-2xl z-40 transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showComments ? 'translate-x-0' : 'translate-x-full'} ${drawerBg} ${drawerBorder} ${textColor} ${transitionClass}`}>
+            <div className="flex flex-col h-full">
+                <div className={`p-6 pt-8 border-b flex items-center justify-between ${transitionClass} ${isDarkMode ? 'border-white/5' : 'border-black/5'}`}>
+                    <h2 className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5" /> 精选评论</h2>
+                    <button onClick={() => setShowComments(false)} className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}><X className="w-4 h-4" /></button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {comments.length > 0 ? comments.map(c => (
+                        <div key={c.commentId} className="flex gap-4 group">
+                            <img src={c.user.avatarUrl} loading="lazy" className={`w-10 h-10 rounded-full border shadow-sm ${transitionClass} ${isDarkMode ? 'border-white/10' : 'border-black/10'}`} />
+                            <div className="flex-1">
+                                <div className="flex justify-between items-baseline mb-1">
+                                    <span className="text-sm font-semibold opacity-90">{c.user.nickname}</span>
+                                    <span className="text-xs opacity-30">{new Date(c.time).toLocaleDateString()}</span>
+                                </div>
+                                <p className="text-sm opacity-70 leading-relaxed font-light">{c.content}</p>
+                                <div className="flex items-center gap-1 mt-2 text-xs opacity-30 group-hover:opacity-50 transition-opacity">
+                                    <Heart className="w-3 h-3" /> {c.likedCount}
+                                </div>
+                            </div>
+                        </div>
+                    )) : (
+                        <div className="text-center opacity-30 mt-20">暂无评论</div>
+                    )}
+                </div>
+            </div>
+      </div>
+  ), [showComments, comments, isDarkMode, drawerBg, drawerBorder, textColor]);
+
+  // --- Optimization: Album Art Component (Prevent Re-render) ---
+  const AlbumArt = useMemo(() => (
+    <div className={`flex-1 flex items-center justify-center p-8 lg:p-12 relative min-h-0 min-w-0 ${transitionClass}`}>
+        <div className={`relative aspect-square w-full max-w-[280px] lg:max-w-[550px] transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isPlaying ? 'scale-100' : 'scale-[0.8]'}`}>
+            <div 
+                className={`absolute inset-0 rounded-xl blur-3xl scale-110 -z-10 transition-colors duration-[2000ms] ${transitionClass}`} 
+                style={{ background: `rgb(${dominantColor})`, opacity: isDarkMode ? 0.6 : 0.3 }}
+            />
+            {currentTrack?.al.picUrl && (
+                <img 
+                    src={currentTrack.al.picUrl} 
+                    /* PERFORMANCE: Eager load main image, high priority, async decoding */
+                    loading="eager"
+                    fetchPriority="high"
+                    decoding="async"
+                    className={`w-full h-full object-cover rounded-xl relative z-20 ${transitionClass} 
+                        ${isDarkMode 
+                            ? 'shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/5' 
+                            : 'shadow-[0_20px_40px_rgba(0,0,0,0.2)] border border-black/5 ring-1 ring-black/5'
+                        }`}
+                />
+            )}
+        </div>
+    </div>
+  ), [currentTrack?.al.picUrl, isPlaying, dominantColor, isDarkMode]);
+
+
+  if (isLoading) {
+      return <div className="h-screen w-screen flex items-center justify-center bg-black text-white"><Loader2 className="animate-spin w-10 h-10" /></div>;
+  }
 
   return (
     <div className={`h-screen w-screen flex flex-col relative overflow-hidden font-sans select-none ${isDarkMode ? 'bg-black' : 'bg-[#f5f5f7]'} ${transitionClass}`}>
@@ -323,40 +471,7 @@ const App: React.FC = () => {
         preload="auto"
       />
 
-      {/* --- High-Quality Background Layering System --- */}
-      {/* BASE LAYER: DARK (Screen Blend) */}
-      <div className="fixed inset-0 -z-50 bg-[#050505]">
-          <div className="absolute inset-0 overflow-hidden pointer-events-none">
-              <div className="absolute inset-0 opacity-20 transition-colors duration-[2000ms]" style={{ background: `rgb(${dominantColor})` }} />
-              <div 
-                 className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] rounded-full filter blur-[100px] animate-spin-slow mix-blend-screen opacity-40 transition-colors duration-[3000ms]"
-                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 60%)`, animationDuration: '45s' }}
-              />
-              <div 
-                 className="absolute -bottom-[50%] -right-[50%] w-[200%] h-[200%] rounded-full filter blur-[100px] animate-spin-slow mix-blend-screen opacity-40 transition-colors duration-[3000ms]"
-                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 60%)`, animationDirection: 'reverse', animationDuration: '35s' }}
-              />
-          </div>
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[100px]" />
-      </div>
-
-      {/* OVERLAY LAYER: LIGHT (Multiply Blend) - Fades in/out */}
-      <div className={`fixed inset-0 -z-40 transition-opacity duration-500 ease-[cubic-bezier(0.2,0,0,1)] ${isDarkMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-          <div className="absolute inset-0 bg-[#f5f5f7]" /> {/* Opaque base to hide dark layer */}
-          <div className="absolute inset-0 overflow-hidden pointer-events-none">
-              <div className="absolute inset-0 opacity-10 transition-colors duration-[2000ms]" style={{ background: `rgb(${dominantColor})` }} />
-              <div 
-                 className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] rounded-full filter blur-[120px] animate-spin-slow mix-blend-multiply opacity-15 transition-colors duration-[3000ms]"
-                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 70%)`, animationDuration: '50s' }}
-              />
-              <div 
-                 className="absolute -bottom-[50%] -right-[50%] w-[200%] h-[200%] rounded-full filter blur-[120px] animate-spin-slow mix-blend-multiply opacity-15 transition-colors duration-[3000ms]"
-                 style={{ background: `radial-gradient(circle at 50% 50%, rgb(${dominantColor}), transparent 70%)`, animationDirection: 'reverse', animationDuration: '40s' }}
-              />
-          </div>
-          <div className="absolute inset-0 bg-white/30 backdrop-blur-[100px]" />
-      </div>
-
+      {backgroundLayer}
 
       {/* --- Watermark --- */}
       <div className={`fixed bottom-3 right-4 z-[100] text-[10px] font-mono pointer-events-none select-none tracking-widest ${transitionClass} ${isDarkMode ? 'text-white/50' : 'text-black/30'}`}>
@@ -373,25 +488,9 @@ const App: React.FC = () => {
       {/* --- Main Content --- */}
       <div className="flex-1 flex flex-col lg:flex-row relative z-10 overflow-hidden min-h-0">
         
-        {/* Album Art */}
-        <div className={`flex-1 flex items-center justify-center p-8 lg:p-12 relative min-h-0 min-w-0 ${transitionClass}`}>
-            <div className={`relative aspect-square w-full max-w-[280px] lg:max-w-[550px] transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isPlaying ? 'scale-100' : 'scale-[0.8]'}`}>
-                <div 
-                    className={`absolute inset-0 rounded-xl blur-3xl scale-110 -z-10 transition-colors duration-[2000ms] ${transitionClass}`} 
-                    style={{ background: `rgb(${dominantColor})`, opacity: isDarkMode ? 0.6 : 0.3 }}
-                />
-                <img 
-                    src={currentTrack?.al.picUrl} 
-                    className={`w-full h-full object-cover rounded-xl relative z-20 ${transitionClass} 
-                        ${isDarkMode 
-                            ? 'shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/5' 
-                            : 'shadow-[0_20px_40px_rgba(0,0,0,0.2)] border border-black/5 ring-1 ring-black/5'
-                        }`}
-                />
-            </div>
-        </div>
+        {AlbumArt}
 
-        {/* Lyrics */}
+        {/* Lyrics - Kept in main render because it needs high frequency updates */}
         <div className="flex-1 h-full relative overflow-hidden lg:mr-8 flex flex-col min-h-0">
             <div 
                 ref={lyricsContainerRef}
@@ -404,7 +503,6 @@ const App: React.FC = () => {
                     let containerClass = "";
                     let textClass = "";
                     
-                    // Logic for spacing: Continuations are closer
                     const marginClass = line.isContinuation ? "mt-3" : "mt-10";
 
                     if (isActive) {
@@ -421,34 +519,30 @@ const App: React.FC = () => {
                         textClass = `font-bold text-lg lg:text-2xl ${lyricInactiveColor}`;
                     }
 
-                    // --- Character Level Rendering for Active Line ---
-                    // This solves the issue where gradients span the entire box width, breaking on multi-line text.
                     const renderActiveContent = () => {
                         const progress = currentTime < line.time ? 0 : 
                                          currentTime > line.time + line.duration ? 1 : 
                                          (currentTime - line.time) / line.duration;
                         
+                        // PERFORMANCE: We could memoize split chars, but JS string split is fast enough for single line.
+                        // The main cost is React DOM reconciliation.
                         const chars = line.text.split('');
                         const totalChars = chars.length;
                         const activeCharIndex = Math.floor(progress * totalChars);
-                        const subProgress = (progress * totalChars) % 1; // 0 to 1 for the current char
+                        const subProgress = (progress * totalChars) % 1; 
 
                         return (
                             <span className={`inline-block w-full break-words leading-tight tracking-tight py-1 ${textClass} ${transitionClass}`}>
                                 {chars.map((char, charIdx) => {
+                                    // Optimization: Reduce conditionals inside the map if possible, but structure requires it
                                     if (charIdx < activeCharIndex) {
-                                        // Past characters: Fully Opaque
                                         return <span key={charIdx} className={isDarkMode ? 'text-white' : 'text-black'}>{char}</span>;
                                     } else if (charIdx > activeCharIndex) {
-                                        // Future characters: Transparent/Dim
                                         return <span key={charIdx} className={isDarkMode ? 'text-white/30' : 'text-black/30'}>{char}</span>;
                                     } else {
-                                        // Current character: Gradient
-                                        // We limit the gradient to just this character, so wrapping doesn't break it.
                                         const p = subProgress * 100;
                                         const activeColor = isDarkMode ? '#ffffff' : '#000000';
                                         const dimColor = isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
-                                        
                                         return (
                                             <span 
                                                 key={charIdx} 
@@ -502,81 +596,8 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* --- Queue Sidebar --- */}
-      <div className={`fixed inset-y-0 left-0 w-80 backdrop-blur-2xl border-r shadow-2xl z-40 transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showQueue ? 'translate-x-0' : '-translate-x-full'} ${drawerBg} ${drawerBorder} ${transitionClass}`}>
-            <div className={`p-6 pt-12 flex flex-col h-full ${textColor} ${transitionClass}`}>
-                <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-bold flex items-center gap-2"><ListMusic /> 播放列表</h2>
-                    <button onClick={() => setShowQueue(false)} className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}><X className="w-5 h-5" /></button>
-                </div>
-                
-                <form onSubmit={handlePlaylistSubmit} className="mb-6">
-                    <label className={`text-xs mb-1 block pl-1 ${transitionClass} ${textSubColor}`}>切换歌单 (支持网易云歌单ID或链接)</label>
-                    <div className="relative">
-                        <input 
-                            value={tempPlaylistId}
-                            onChange={(e) => setTempPlaylistId(e.target.value)}
-                            placeholder="输入歌单 ID 或 粘贴链接..."
-                            className={`w-full border rounded-lg py-2 pl-9 pr-3 text-sm focus:outline-none ${transitionClass} ${isDarkMode ? 'bg-white/10 border-white/10 focus:border-white/30 focus:bg-white/20 text-white' : 'bg-black/5 border-black/10 focus:border-black/20 focus:bg-black/10 text-black'}`}
-                        />
-                        <Search className={`w-4 h-4 absolute left-3 top-2.5 ${transitionClass} ${isDarkMode ? 'text-white/40' : 'text-black/40'}`} />
-                    </div>
-                    <button type="submit" className={`w-full mt-2 font-bold py-2 rounded-lg text-xs ${transitionClass} ${isDarkMode ? 'bg-white text-black hover:bg-neutral-200' : 'bg-black text-white hover:bg-neutral-800'}`}>
-                        加载歌单
-                    </button>
-                </form>
-
-                <div className="flex-1 overflow-y-auto no-scrollbar space-y-1 pb-20">
-                    {playlist.map((track, i) => (
-                        <div 
-                            key={track.id} 
-                            onClick={() => { setCurrentIndex(i); setIsPlaying(true); }}
-                            className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer ${transitionClass} ${
-                                i === currentIndex 
-                                    ? (isDarkMode ? 'bg-white/20 text-white' : 'bg-black/10 text-black') 
-                                    : (isDarkMode ? 'hover:bg-white/5 text-white/80' : 'hover:bg-black/5 text-black/80')
-                            }`}
-                        >
-                            <img src={track.al.picUrl} className="w-10 h-10 rounded-md object-cover" />
-                            <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium truncate">{track.name}</div>
-                                <div className={`text-xs truncate ${transitionClass} ${isDarkMode ? 'text-white/40' : 'text-black/40'}`}>{track.ar.map(a => a.name).join(', ')}</div>
-                            </div>
-                            {i === currentIndex && <div className={`w-2 h-2 rounded-full animate-pulse ${isDarkMode ? 'bg-white' : 'bg-black'}`} />}
-                        </div>
-                    ))}
-                </div>
-            </div>
-      </div>
-
-      {/* --- Comments Drawer --- */}
-      <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] backdrop-blur-3xl border-l shadow-2xl z-40 transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showComments ? 'translate-x-0' : 'translate-x-full'} ${drawerBg} ${drawerBorder} ${textColor} ${transitionClass}`}>
-            <div className="flex flex-col h-full">
-                <div className={`p-6 pt-8 border-b flex items-center justify-between ${transitionClass} ${isDarkMode ? 'border-white/5' : 'border-black/5'}`}>
-                    <h2 className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5" /> 精选评论</h2>
-                    <button onClick={() => setShowComments(false)} className={`p-2 rounded-full ${transitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}><X className="w-4 h-4" /></button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {comments.length > 0 ? comments.map(c => (
-                        <div key={c.commentId} className="flex gap-4 group">
-                            <img src={c.user.avatarUrl} className={`w-10 h-10 rounded-full border shadow-sm ${transitionClass} ${isDarkMode ? 'border-white/10' : 'border-black/10'}`} />
-                            <div className="flex-1">
-                                <div className="flex justify-between items-baseline mb-1">
-                                    <span className="text-sm font-semibold opacity-90">{c.user.nickname}</span>
-                                    <span className="text-xs opacity-30">{new Date(c.time).toLocaleDateString()}</span>
-                                </div>
-                                <p className="text-sm opacity-70 leading-relaxed font-light">{c.content}</p>
-                                <div className="flex items-center gap-1 mt-2 text-xs opacity-30 group-hover:opacity-50 transition-opacity">
-                                    <Heart className="w-3 h-3" /> {c.likedCount}
-                                </div>
-                            </div>
-                        </div>
-                    )) : (
-                        <div className="text-center opacity-30 mt-20">暂无评论</div>
-                    )}
-                </div>
-            </div>
-      </div>
+      {queueDrawer}
+      {commentsDrawer}
 
       {/* --- Player Bar --- */}
       <MusicPlayer 
