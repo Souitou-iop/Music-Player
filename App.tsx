@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments, fetchRecommendedPlaylists, searchPlaylists, searchSongs, searchArtists, fetchArtistSongsList, fetchArtistDetail } from './services/musicApi';
+import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments, fetchRecommendedPlaylists, searchPlaylists, searchSongs, searchArtists, fetchArtistSongsList, fetchArtistDetail, RAW_API_BASES, setApiSource, pingApiSource, getCurrentApiSource } from './services/musicApi';
 import { Track, LyricLine, Comment, RecommendedPlaylist, Artist } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
 import { APP_VERSION, DEFAULT_VOLUME } from './constants';
-import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw, Grid, Play, Music2, ArrowLeft, Mic2, User as UserIcon, Calendar, Flame } from 'lucide-react';
+import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw, Grid, Play, Music2, ArrowLeft, Mic2, User as UserIcon, Calendar, Flame, SignalHigh, Check, Zap } from 'lucide-react';
 
 const DEFAULT_PLAYLIST_ID = '833444858'; 
 
@@ -84,6 +84,12 @@ const App: React.FC = () => {
   const [viewTab, setViewTab] = useState<ViewType>('recommend');
   const [showComments, setShowComments] = useState(false);
   
+  // API 线路管理状态
+  const [showApiSwitcher, setShowApiSwitcher] = useState(false);
+  const [apiLatencies, setApiLatencies] = useState<Record<string, number>>({});
+  const [isPinging, setIsPinging] = useState(false);
+  const [currentApi, setCurrentApi] = useState(getCurrentApiSource());
+
   // 主题状态
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     return (localStorage.getItem('vinyl_theme') as ThemeMode) || 'system';
@@ -305,6 +311,39 @@ const App: React.FC = () => {
   };
 
   const currentTrack = playlist[currentIndex];
+
+  // --- API 测速与切换逻辑 ---
+  const handlePingAll = async () => {
+      setIsPinging(true);
+      const results: Record<string, number> = {};
+      
+      // 并行测速
+      await Promise.all(RAW_API_BASES.map(async (url) => {
+          const latency = await pingApiSource(url);
+          results[url] = latency;
+      }));
+      
+      setApiLatencies(results);
+      setIsPinging(false);
+  };
+
+  const handleSwitchApi = async (url: string) => {
+      setApiSource(url);
+      setCurrentApi(url);
+      setShowApiSwitcher(false);
+      // 重新加载当前数据以应用新线路
+      if (viewTab === 'artist' && selectedArtistId) {
+          loadArtistData(selectedArtistId, artistSortOrder);
+      } else {
+          // 如果只是在推荐页，重新加载推荐
+          if (viewTab === 'recommend' && !isSearching) {
+             setRecommendations([]); 
+             fetchRecommendedPlaylists().then(setRecommendations);
+          } else {
+             loadPlaylistData(playlistId);
+          }
+      }
+  };
 
   // --- 轨道切换逻辑 ---
   useEffect(() => {
@@ -681,66 +720,77 @@ const App: React.FC = () => {
           <div className={`relative w-full h-full md:inset-10 md:w-auto md:h-auto md:fixed md:rounded-2xl ${overlayBg} backdrop-blur-2xl border ${overlayBorder} flex flex-col overflow-hidden shadow-2xl transition-transform duration-500 md:max-w-6xl md:min-w-[80vw] ${showQueue ? 'scale-100 translate-y-0' : 'scale-95 translate-y-8'}`}>
               
               <div className={`flex-none p-4 md:p-6 border-b ${overlayBorder} flex flex-col md:flex-row gap-4 items-center justify-between ${sectionBg}`}>
-                   {isSearching || viewTab === 'artist' ? (
-                       <div className={`flex ${pillBg} p-1 rounded-lg self-start md:self-auto w-full md:w-auto overflow-x-auto no-scrollbar items-center shrink-0`}>
-                             <button 
-                                 onClick={() => {
-                                    if (viewTab === 'artist') {
-                                        if (isSearching) setViewTab('recommend');
-                                        else { setViewTab('queue'); setShowQueue(false); }
-                                    } else { clearSearch(); }
-                                 }}
-                                 className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 ${isDarkMode ? 'text-white/50 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-black/5'} transition-all shrink-0 border-r ${overlayBorder} mr-1`}
-                             >
-                                 <ArrowLeft className="w-4 h-4" />
-                             </button>
-                             {viewTab === 'artist' ? (
-                                <div className={`px-4 py-2 text-sm font-bold ${textColor} flex items-center gap-2`}>
-                                    <UserIcon className="w-4 h-4" /> 歌手详情
-                                </div>
-                             ) : (
-                                <>
+                   {/* 顶部工具栏 - 添加了 API 切换按钮 */}
+                   <div className="flex items-center gap-2 w-full md:w-auto">
+                        <button
+                            onClick={() => setShowApiSwitcher(!showApiSwitcher)}
+                            className={`p-2 rounded-lg relative overflow-hidden group transition-all duration-300 ${isDarkMode ? 'hover:bg-white/10 text-white/50 hover:text-white' : 'hover:bg-black/5 text-slate-500 hover:text-slate-900'}`}
+                            title="切换 API 线路"
+                        >
+                             <SignalHigh className="w-5 h-5" />
+                        </button>
+
+                        {isSearching || viewTab === 'artist' ? (
+                            <div className={`flex ${pillBg} p-1 rounded-lg self-start md:self-auto w-full md:w-auto overflow-x-auto no-scrollbar items-center shrink-0`}>
                                     <button 
-                                        onClick={() => handleTabChange('playlist')}
-                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'playlist' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                        onClick={() => {
+                                            if (viewTab === 'artist') {
+                                                if (isSearching) setViewTab('recommend');
+                                                else { setViewTab('queue'); setShowQueue(false); }
+                                            } else { clearSearch(); }
+                                        }}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 ${isDarkMode ? 'text-white/50 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-black/5'} transition-all shrink-0 border-r ${overlayBorder} mr-1`}
                                     >
-                                        <Grid className="w-4 h-4" /> 歌单
+                                        <ArrowLeft className="w-4 h-4" />
+                                    </button>
+                                    {viewTab === 'artist' ? (
+                                        <div className={`px-4 py-2 text-sm font-bold ${textColor} flex items-center gap-2`}>
+                                            <UserIcon className="w-4 h-4" /> 歌手详情
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <button 
+                                                onClick={() => handleTabChange('playlist')}
+                                                className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'playlist' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                            >
+                                                <Grid className="w-4 h-4" /> 歌单
+                                            </button>
+                                            <button 
+                                                onClick={() => handleTabChange('song')}
+                                                className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'song' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                            >
+                                                <Mic2 className="w-4 h-4" /> 单曲
+                                            </button>
+                                            <button 
+                                                onClick={() => handleTabChange('artist')}
+                                                className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'artist' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                            >
+                                                <UserIcon className="w-4 h-4" /> 歌手
+                                            </button>
+                                        </>
+                                    )}
+                            </div>
+                        ) : (
+                            <div className={`relative flex ${pillBg} p-1 rounded-lg self-start md:self-auto w-full md:w-auto md:min-w-[340px] items-center isolate shrink-0`}>
+                                    <div 
+                                        className={`absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] ${isDarkMode ? 'bg-white/10 border-white/5 shadow-lg' : 'bg-black/[0.08] border-black/5 shadow-sm'} rounded-md transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] -z-10`}
+                                        style={{ transform: viewTab === 'queue' ? 'translateX(100%)' : 'translateX(0%)' }}
+                                    />
+                                    <button 
+                                        onClick={() => setViewTab('recommend')}
+                                        className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'recommend' ? textColor : 'opacity-30 hover:opacity-60'}`}
+                                    >
+                                        <Grid className="w-4 h-4" /> 推荐歌单
                                     </button>
                                     <button 
-                                        onClick={() => handleTabChange('song')}
-                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'song' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                        onClick={() => setViewTab('queue')}
+                                        className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'queue' ? textColor : 'opacity-30 hover:opacity-60'}`}
                                     >
-                                        <Mic2 className="w-4 h-4" /> 单曲
+                                        <ListMusic className="w-4 h-4" /> 当前播放 ({playlist.length})
                                     </button>
-                                    <button 
-                                        onClick={() => handleTabChange('artist')}
-                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'artist' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
-                                    >
-                                        <UserIcon className="w-4 h-4" /> 歌手
-                                    </button>
-                                </>
-                             )}
-                       </div>
-                   ) : (
-                      <div className={`relative flex ${pillBg} p-1 rounded-lg self-start md:self-auto w-full md:w-auto md:min-w-[340px] items-center isolate shrink-0`}>
-                            <div 
-                                className={`absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] ${isDarkMode ? 'bg-white/10 border-white/5 shadow-lg' : 'bg-black/[0.08] border-black/5 shadow-sm'} rounded-md transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] -z-10`}
-                                style={{ transform: viewTab === 'queue' ? 'translateX(100%)' : 'translateX(0%)' }}
-                            />
-                            <button 
-                                onClick={() => setViewTab('recommend')}
-                                className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'recommend' ? textColor : 'opacity-30 hover:opacity-60'}`}
-                            >
-                                <Grid className="w-4 h-4" /> 推荐歌单
-                            </button>
-                            <button 
-                                onClick={() => setViewTab('queue')}
-                                className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'queue' ? textColor : 'opacity-30 hover:opacity-60'}`}
-                            >
-                                <ListMusic className="w-4 h-4" /> 当前播放 ({playlist.length})
-                            </button>
-                      </div>
-                   )}
+                            </div>
+                        )}
+                   </div>
   
                    <div className="flex w-full md:w-auto items-center justify-end">
                        <form onSubmit={handleSearchSubmit} className="relative w-full md:w-80 group">
@@ -759,6 +809,65 @@ const App: React.FC = () => {
                        </form>
                    </div>
               </div>
+
+              {/* API Switcher Modal/Popover */}
+              {showApiSwitcher && (
+                  <div className={`absolute top-20 left-4 z-50 w-80 md:w-96 rounded-xl shadow-2xl border backdrop-blur-3xl animate-fade-in ${isDarkMode ? 'bg-neutral-900/95 border-white/10' : 'bg-white/95 border-black/5'}`}>
+                      <div className={`p-4 border-b flex items-center justify-between ${isDarkMode ? 'border-white/5' : 'border-black/5'}`}>
+                          <h3 className={`font-bold ${textColor}`}>服务器线路切换</h3>
+                          <div className="flex gap-2">
+                            <button 
+                                onClick={handlePingAll}
+                                disabled={isPinging}
+                                className={`text-xs px-2 py-1 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition flex items-center gap-1 ${isPinging ? 'opacity-50' : ''}`}
+                            >
+                                <Zap className="w-3 h-3" /> {isPinging ? '测速中...' : '一键测速'}
+                            </button>
+                            <button onClick={() => setShowApiSwitcher(false)} className={`p-1 rounded-md opacity-50 hover:opacity-100 ${textColor}`}><X className="w-4 h-4" /></button>
+                          </div>
+                      </div>
+                      <div className="max-h-[300px] overflow-y-auto p-2">
+                          <p className={`text-xs p-2 opacity-50 ${textColor}`}>选择延迟最低的线路可提升加载速度</p>
+                          {RAW_API_BASES.map((url, i) => {
+                              const latency = apiLatencies[url];
+                              let statusColor = isDarkMode ? 'bg-white/5' : 'bg-black/5';
+                              let latencyColor = 'text-gray-400';
+                              
+                              if (latency !== undefined) {
+                                  if (latency < 0) {
+                                      latencyColor = 'text-red-500';
+                                  } else if (latency < 300) {
+                                      latencyColor = 'text-green-500';
+                                  } else if (latency < 800) {
+                                      latencyColor = 'text-yellow-500';
+                                  } else {
+                                      latencyColor = 'text-orange-500';
+                                  }
+                              }
+
+                              const isActive = currentApi === url;
+
+                              return (
+                                  <button 
+                                    key={i}
+                                    onClick={() => handleSwitchApi(url)}
+                                    className={`w-full text-left p-3 mb-1 rounded-lg flex items-center justify-between transition-colors ${isActive ? (isDarkMode ? 'bg-white/10' : 'bg-black/10') : 'hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                  >
+                                      <div className="flex-1 min-w-0 pr-2">
+                                          <div className={`text-xs font-mono truncate ${textColor}`}>{url.replace('https://', '')}</div>
+                                      </div>
+                                      <div className="flex items-center gap-3 shrink-0">
+                                          <span className={`text-xs font-bold ${latencyColor}`}>
+                                              {latency === undefined ? '--' : (latency < 0 ? '超时' : `${latency}ms`)}
+                                          </span>
+                                          {isActive && <Check className="w-4 h-4 text-rose-500" />}
+                                      </div>
+                                  </button>
+                              )
+                          })}
+                      </div>
+                  </div>
+              )}
   
               <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth no-scrollbar">
                   {viewTab === 'artist' ? (
@@ -975,7 +1084,7 @@ const App: React.FC = () => {
           </div>
       </div>
     );
-  }, [showQueue, viewTab, recommendations, playlistSearchResults, songSearchResults, artistSearchResults, isSearching, searchType, isSearchLoading, isArtistLoading, artistDetail, artistSongs, artistSortOrder, playlist, currentIndex, tempPlaylistId, isPlaying, isDarkMode, textColor, textSubColor]);
+  }, [showQueue, viewTab, recommendations, playlistSearchResults, songSearchResults, artistSearchResults, isSearching, searchType, isSearchLoading, isArtistLoading, artistDetail, artistSongs, artistSortOrder, playlist, currentIndex, tempPlaylistId, isPlaying, isDarkMode, textColor, textSubColor, showApiSwitcher, apiLatencies, isPinging, currentApi]);
 
   const commentsDrawer = useMemo(() => (
       <>
