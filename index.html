@@ -68,6 +68,23 @@
         animation: rotate-scale 20s infinite linear;
       }
 
+      /* New: Album Art Flowing Effects */
+      @keyframes breathe-glow {
+        0%, 100% { transform: scale(0.95); opacity: 0.5; }
+        50% { transform: scale(1.05); opacity: 0.8; }
+      }
+      .animate-breathe-glow {
+        animation: breathe-glow 6s ease-in-out infinite;
+      }
+
+      @keyframes rotate-flow {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .animate-rotate-flow {
+        animation: rotate-flow 20s linear infinite;
+      }
+
       /* Lyric Highlight Gradient - Relaxed mask */
       .lyric-mask {
         mask-image: linear-gradient(to bottom, transparent 0%, black 10%, black 90%, transparent 100%);

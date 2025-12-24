@@ -4,16 +4,24 @@ import { Track, LyricLine, Comment, RecommendedPlaylist, Artist } from '../types
 // 优化后的 API 列表，包含更稳定的镜像源
 // 移除了部分频繁超时的节点，新增了近期活跃的节点
 export const RAW_API_BASES = [
-  'https://music.cyrilstudio.top', // 长期稳定
-  'https://ncmapi.redd.one',       // 长期稳定
+  // --- 用户推荐的高速节点 (High Priority) ---
+  'https://ncm.zhenxin.me',       // 上海
+  'https://zm.i9mr.com',          // 扬州
+  'https://zm.wwoyun.cn', 
+  'https://music.cyrilstudio.top',
+  'https://music-api.heheda.top',
+  'https://ncmapi.redd.one',
+  'https://api.music.areschang.top',
+  'https://ncm.cloud.zlib.cn',
+  'https://api.lo-li.cw',
+  
+  // --- 备用节点 (Fallback) ---
   'https://music.jw1.dev',
   'https://netease.pub',
-  'https://api.music.areschang.top',
   'https://music.qier296.top',
-  'https://api.wengqianshan.com',  // 新增
-  'https://music-api.gdstudio.xyz', // 新增
+  'https://api.wengqianshan.com',
+  'https://music-api.gdstudio.xyz',
   'https://netease-cloud-music-api-anon.vercel.app', // Vercel 节点，可能会有冷启动延迟
-  'https://music-api.heheda.top',
   'https://api.paugram.com/netease'
 ];
 
@@ -152,15 +160,22 @@ export const pingApiSource = async (url: string): Promise<number> => {
         // 缩短超时时间到 3000ms，提高测速反馈速度
         const timeoutId = setTimeout(() => controller.abort(), 3000);
         
-        // 请求根路径
-        const res = await fetch(url, { method: 'GET', signal: controller.signal });
+        // 使用 no-cors 模式，这样即使服务器根路径没有配置 CORS 头，只要能建立连接，fetch 就会 resolve (status 为 0/opaque)
+        // 我们只关心网络连通性，不关心返回内容
+        // 添加时间戳防止缓存
+        const pingUrl = `${url.replace(/\/$/, '')}/?t=${Date.now()}`;
+        
+        await fetch(pingUrl, { 
+            method: 'GET', 
+            signal: controller.signal,
+            mode: 'no-cors', 
+            cache: 'no-store'
+        });
+        
         clearTimeout(timeoutId);
 
-        // 只要状态码小于 500 (包括 404 Not Found)，都说明服务器是通的，可以作为 API 源
-        if (res.status < 500) {
-            return Date.now() - start;
-        }
-        return -1;
+        // 只要没有抛出网络错误，就认为连接成功
+        return Date.now() - start;
     } catch {
         return -1;
     }
