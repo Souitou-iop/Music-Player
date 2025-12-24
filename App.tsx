@@ -1,35 +1,33 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { fetchPlaylist, getAudioUrl, fetchLyrics, fetchComments, fetchRecommendedPlaylists, searchPlaylists, searchSongs, searchArtists, fetchArtistSongsList, fetchArtistDetail } from './services/musicApi';
-import { processLocalArchive } from './services/localMusicService';
 import { Track, LyricLine, Comment, RecommendedPlaylist, Artist } from './types';
 import { MusicPlayer } from './components/MusicPlayer';
 import { APP_VERSION, DEFAULT_VOLUME } from './constants';
-import { Loader2, AlertCircle, Search } from 'lucide-react';
-
-// New Components & Hooks
-import { useTheme } from './hooks/useTheme';
-import { useVisuals } from './hooks/useVisuals';
-import { BackgroundLayer } from './components/BackgroundLayer';
-import { AlbumArt } from './components/AlbumArt';
-import { LyricsView } from './components/LyricsView';
-import { CommentsDrawer } from './components/CommentsDrawer';
-import { QueueDrawer, SearchType, ViewType } from './components/QueueDrawer';
+import { MessageSquare, ListMusic, Loader2, Heart, X, Search, Disc, AlertCircle, RefreshCw, Grid, Play, Music2, ArrowLeft, Mic2, User as UserIcon, Calendar, Flame } from 'lucide-react';
 
 const DEFAULT_PLAYLIST_ID = '833444858'; 
 
-const App: React.FC = () => {
-  // Theme Hook
-  const { themeMode, isDarkMode, toggleTheme } = useTheme();
+export type ThemeMode = 'dark' | 'light' | 'system';
+type SearchType = 'playlist' | 'song' | 'artist';
+type ViewType = 'recommend' | 'queue' | 'artist';
 
-  // Data State
+// 调整颜色活力的辅助函数
+const adjustColor = (r: number, g: number, b: number, saturationBoost: number = 1.2) => {
+  const max = Math.max(r, g, b);
+  if (max < 30) return { r: r + 20, g: g + 20, b: b + 20 }; // 太暗
+  return { r, g, b };
+};
+
+const App: React.FC = () => {
+  // 数据状态
   const [playlistId, setPlaylistId] = useState(DEFAULT_PLAYLIST_ID);
   const [playlist, setPlaylist] = useState<Track[]>([]);
   
-  // Recommendations & Search State
+  // 推荐与搜索状态
   const [recommendations, setRecommendations] = useState<RecommendedPlaylist[]>([]);
   
-  // Search Results State
+  // 搜索结果状态
   const [searchType, setSearchType] = useState<SearchType>('playlist');
   const [playlistSearchResults, setPlaylistSearchResults] = useState<RecommendedPlaylist[]>([]);
   const [songSearchResults, setSongSearchResults] = useState<Track[]>([]);
@@ -38,7 +36,7 @@ const App: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchLoading, setIsSearchLoading] = useState(false);
 
-  // Artist Detail State
+  // 歌手详情状态
   const [selectedArtistId, setSelectedArtistId] = useState<number | null>(null);
   const [artistDetail, setArtistDetail] = useState<any>(null);
   const [artistSongs, setArtistSongs] = useState<Track[]>([]);
@@ -48,19 +46,19 @@ const App: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   
-  // UI State for Playlist Input
+  // UI 歌单输入状态
   const [tempPlaylistId, setTempPlaylistId] = useState('');
   
-  // Player State
+  // 播放器状态
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   
-  // Playback Mode State
+  // 播放模式状态
   const [isShuffle, setIsShuffle] = useState(false);
   const [isReverse, setIsReverse] = useState(false);
   
-  // Volume with Persistence
+  // 音量持久化
   const [volume, setVolume] = useState(() => {
       const saved = localStorage.getItem('vinyl_volume');
       return saved !== null ? parseFloat(saved) : DEFAULT_VOLUME;
@@ -68,25 +66,75 @@ const App: React.FC = () => {
 
   const [playError, setPlayError] = useState<string | null>(null);
   
-  // View State
+  // 视图状态
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [isRefreshingComments, setIsRefreshingComments] = useState(false);
   
-  // UI Toggles
+  // 视觉引擎状态
+  const [dominantColor, setDominantColor] = useState('20, 20, 20');
+  const [bgPalette, setBgPalette] = useState<{c1: string, c2: string, c3: string}>({
+      c1: 'rgba(50,50,50,0.8)',
+      c2: 'rgba(30,30,30,0.8)',
+      c3: 'rgba(20,20,20,0.8)'
+  });
+  
+  // UI 开关
   const [showQueue, setShowQueue] = useState(false);
   const [viewTab, setViewTab] = useState<ViewType>('recommend');
   const [showComments, setShowComments] = useState(false);
+  
+  // 主题状态
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    return (localStorage.getItem('vinyl_theme') as ThemeMode) || 'system';
+  });
+  
+  // 同步初始化暗色模式状态
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const savedMode = (localStorage.getItem('vinyl_theme') as ThemeMode) || 'system';
+    if (savedMode === 'system') {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return savedMode === 'dark';
+  });
 
-  // Error handling
+  // 连续错误处理
   const [consecutiveErrors, setConsecutiveErrors] = useState(0);
 
   // Refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const loadingTrackRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
+  
+  // 动画循环 Refs
+  const activeIndexRef = useRef(0);
+  const isUserScrollingRef = useRef(false);
 
-  // --- Load Playlist ---
+  // --- 主题逻辑 ---
+  useEffect(() => {
+    localStorage.setItem('vinyl_theme', themeMode);
+    
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    const resolveTheme = () => {
+        if (themeMode === 'system') return mediaQuery.matches;
+        return themeMode === 'dark';
+    };
+
+    setIsDarkMode(resolveTheme());
+
+    const handler = (e: MediaQueryListEvent) => {
+        if (themeMode === 'system') {
+            setIsDarkMode(e.matches);
+        }
+    };
+    
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, [themeMode]);
+
+  // --- 加载歌单 ---
   const loadPlaylistData = async (id: string) => {
     setIsLoading(true);
     setPlayError(null);
@@ -113,7 +161,7 @@ const App: React.FC = () => {
     loadPlaylistData(playlistId);
   }, []); 
 
-  // Fetch recommendations when queue view opens
+  // 歌单推荐
   useEffect(() => {
       if (showQueue && recommendations.length === 0) {
           fetchRecommendedPlaylists().then(setRecommendations);
@@ -126,11 +174,11 @@ const App: React.FC = () => {
       if (idParamMatch) return idParamMatch[1];
       const pathMatch = clean.match(/\/playlist\/(\d+)/);
       if (pathMatch) return pathMatch[1];
-      if (/^\d{5,}$/.test(clean)) return clean; // Assuming IDs are at least 5 digits
+      if (/^\d{5,}$/.test(clean)) return clean;
       return null;
   };
 
-  // Perform the search based on current searchType
+  // 执行搜索
   const executeSearch = async (query: string, type: SearchType) => {
       if (!query.trim()) return;
       
@@ -162,7 +210,6 @@ const App: React.FC = () => {
 
     const extractedId = extractIdFromInput(tempPlaylistId);
     
-    // Case 1: Valid ID or Link found -> Direct Load (Playlist Only)
     if (extractedId) {
         setTempPlaylistId(extractedId);
         if (extractedId === playlistId) return; 
@@ -172,13 +219,11 @@ const App: React.FC = () => {
         return;
     }
 
-    // Case 2: Not an ID -> Perform Search
     executeSearch(tempPlaylistId, searchType);
   };
 
   const handleTabChange = (newType: SearchType) => {
       setSearchType(newType);
-      // If we already have a search query, re-search immediately for the new type
       if (tempPlaylistId && isSearching) {
           executeSearch(tempPlaylistId, newType);
       }
@@ -190,57 +235,27 @@ const App: React.FC = () => {
       setSongSearchResults([]);
       setArtistSearchResults([]);
       setTempPlaylistId('');
-      setSearchType('playlist'); // Reset to default
+      setSearchType('playlist');
   };
 
   const handleSongResultClick = (track: Track) => {
-      // Logic: Playing a song from search replaces current queue with search results (or just plays it)
       setPlaylist(songSearchResults);
       const idx = songSearchResults.findIndex(t => t.id === track.id);
       setCurrentIndex(idx !== -1 ? idx : 0);
       setIsPlaying(true);
       setPlayError(null);
-      // Close overlay to show player
       setShowQueue(false);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      setIsLoading(true);
-      try {
-          const tracks = await processLocalArchive(file);
-          if (tracks.length > 0) {
-              setPlaylist(tracks);
-              setCurrentIndex(0);
-              setIsPlaying(false);
-              setPlaylistId('local-import');
-              setShowQueue(false);
-              setPlayError(null);
-          } else {
-              setPlayError("未在压缩包中找到音频文件 (支持 mp3/wav/ogg/m4a)");
-          }
-      } catch (err: any) {
-          setPlayError(err.message || "解析文件失败");
-      } finally {
-          setIsLoading(false);
-          // Reset file input logic is handled inside component if necessary, or we just rely on new selection
-          e.target.value = '';
-      }
-  };
-
-  // Load Artist Data (Detail + Songs)
+  // 加载歌手数据
   const loadArtistData = async (artistId: number, order: 'hot' | 'time' = 'hot') => {
       setIsArtistLoading(true);
       setSelectedArtistId(artistId);
       setArtistSortOrder(order);
-      // Ensure the view switches to artist detail
       setViewTab('artist');
       setShowQueue(true);
 
       try {
-          // Parallel fetch: detail + songs
           const [detail, songs] = await Promise.all([
               fetchArtistDetail(artistId),
               fetchArtistSongsList(artistId, order)
@@ -255,28 +270,22 @@ const App: React.FC = () => {
       }
   };
 
-  // Click handler from Search
   const handleArtistResultClick = (artistId: number) => {
       loadArtistData(artistId, 'hot');
   };
 
-  // Click handler from Player (Bottom Left)
   const handlePlayerArtistClick = (artistId: number) => {
-      // Local artists have id=0, ignore
-      if (artistId === 0) return;
       loadArtistData(artistId, 'hot');
   };
 
-  // Sort toggle handler - Optimized to only fetch songs
   const handleArtistSortChange = async (order: 'hot' | 'time') => {
       if (!selectedArtistId) return;
-      if (order === artistSortOrder) return; // No change
+      if (order === artistSortOrder) return;
       
       setArtistSortOrder(order);
-      setIsArtistLoading(true); // Reuse loading state for list part
+      setIsArtistLoading(true);
       
       try {
-          // Only fetch songs, keep detail
           const songs = await fetchArtistSongsList(selectedArtistId, order);
           setArtistSongs(songs);
       } catch (e) {
@@ -286,7 +295,6 @@ const App: React.FC = () => {
       }
   };
 
-  // Play from Artist List
   const handleArtistSongClick = (track: Track) => {
       setPlaylist(artistSongs);
       const idx = artistSongs.findIndex(t => t.id === track.id);
@@ -298,10 +306,7 @@ const App: React.FC = () => {
 
   const currentTrack = playlist[currentIndex];
 
-  // Visuals Hook (Dominant Color)
-  const { dominantColor, bgPalette } = useVisuals(currentTrack);
-
-  // --- Track Change Logic ---
+  // --- 轨道切换逻辑 ---
   useEffect(() => {
     if (!currentTrack) return;
 
@@ -314,14 +319,7 @@ const App: React.FC = () => {
         setPlayError(null);
 
         try {
-            let url: string;
-            // Check if track has a local source URL (from zip import)
-            if (currentTrack.sourceUrl) {
-                url = currentTrack.sourceUrl;
-            } else {
-                url = await getAudioUrl(currentTrack.id);
-            }
-            
+            const url = await getAudioUrl(currentTrack.id);
             if (!isMounted || loadingTrackRef.current !== currentTrack.id) return;
 
             if (audioRef.current) {
@@ -339,15 +337,35 @@ const App: React.FC = () => {
             if (isMounted) handleAudioError(null as any);
         }
 
-        // Only fetch metadata for non-local tracks (local tracks have negative IDs)
-        if (!currentTrack.sourceUrl && currentTrack.id > 0) {
-            fetchLyrics(currentTrack.id).then(data => {
-                if (isMounted && loadingTrackRef.current === currentTrack.id) setLyrics(data);
-            }).catch(() => {});
-            
-            fetchComments(currentTrack.id).then(data => {
-                if (isMounted && loadingTrackRef.current === currentTrack.id) setComments(data);
-            }).catch(() => {});
+        fetchLyrics(currentTrack.id).then(data => {
+            if (isMounted && loadingTrackRef.current === currentTrack.id) setLyrics(data);
+        }).catch(() => {});
+        
+        fetchComments(currentTrack.id).then(data => {
+            if (isMounted && loadingTrackRef.current === currentTrack.id) setComments(data);
+        }).catch(() => {});
+
+        const img = new Image();
+        img.crossOrigin = "Anonymous";
+        img.src = currentTrack.al.picUrl;
+        img.onload = () => {
+            if (!isMounted || loadingTrackRef.current !== currentTrack.id) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = 1; canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+            if(ctx) {
+                ctx.drawImage(img, 0, 0, 1, 1);
+                const [rawR, rawG, rawB] = ctx.getImageData(0,0,1,1).data;
+                const { r, g, b } = adjustColor(rawR, rawG, rawB);
+
+                setDominantColor(`${r},${g},${b}`);
+
+                setBgPalette({
+                    c1: `rgb(${r}, ${g}, ${b})`,
+                    c2: `rgb(${Math.min(255, r * 1.2)}, ${Math.min(255, g * 0.8)}, ${Math.min(255, b * 1.1)})`,
+                    c3: `rgb(${Math.max(0, r * 0.8)}, ${Math.max(0, g * 1.1)}, ${Math.max(0, b * 0.9)})`
+                });
+            }
         }
     };
 
@@ -355,7 +373,6 @@ const App: React.FC = () => {
     return () => { isMounted = false; };
   }, [currentTrack]); 
 
-  // --- Smooth Timer Loop ---
   useEffect(() => {
       const loop = () => {
           if (audioRef.current && !audioRef.current.paused) {
@@ -449,17 +466,16 @@ const App: React.FC = () => {
               setConsecutiveErrors(0);
               setPlayError(null);
           } catch (e) {
-              if (e instanceof Error && e.name === 'NotAllowedError') { /* User interaction needed */ } 
+              if (e instanceof Error && e.name === 'NotAllowedError') { } 
               else { audioRef.current.load(); audioRef.current.play().catch(() => playNext()); }
           }
       }
   }, [isPlaying, currentTrack, playNext]);
 
   const handleSeek = useCallback((ms: number) => {
-      // Optimistic UI update - Don't wait for audio event
+      isUserScrollingRef.current = false;
+      if (userScrollTimeout.current) clearTimeout(userScrollTimeout.current);
       setCurrentTime(ms);
-
-      // Audio Update
       if (audioRef.current) {
           const newTime = ms / 1000;
           if (isFinite(newTime)) {
@@ -469,7 +485,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleRefreshComments = useCallback(async () => {
-      if (!currentTrack || currentTrack.sourceUrl) return; // Disable comments for local
+      if (!currentTrack) return;
       setIsRefreshingComments(true);
       try {
           const data = await fetchComments(currentTrack.id);
@@ -491,18 +507,547 @@ const App: React.FC = () => {
       localStorage.setItem('vinyl_volume', volume.toString());
   }, [volume]);
 
-  // Memoized handlers for MusicPlayer to prevent unnecessary re-renders
   const handleToggleQueue = useCallback(() => setShowQueue(prev => !prev), []);
   const handleToggleComments = useCallback(() => setShowComments(prev => !prev), []);
+  const handleToggleTheme = useCallback(() => {
+      const modes: ThemeMode[] = ['dark', 'light', 'system'];
+      const next = modes[(modes.indexOf(themeMode) + 1) % modes.length];
+      setThemeMode(next);
+  }, [themeMode]);
   const handleToggleShuffle = useCallback(() => setIsShuffle(prev => !prev), []);
   const handleToggleReverse = useCallback(() => setIsReverse(prev => !prev), []);
 
-  // --- Auto-Scroll Helpers ---
+  // --- 歌词可视化逻辑 ---
   const activeIndex = lyrics.findIndex((l, i) => l.time <= currentTime && (i === lyrics.length - 1 || lyrics[i+1].time > currentTime));
-  
-  // Transitions
+  useEffect(() => { activeIndexRef.current = activeIndex; }, [activeIndex]);
+
+  const updateLyricVisuals = useCallback(() => {
+    if (!lyricsContainerRef.current) return;
+    const container = lyricsContainerRef.current;
+    const containerRect = container.getBoundingClientRect();
+    const activeZone = containerRect.height * 0.45; 
+    const center = containerRect.top + containerRect.height / 2;
+    const activeIdx = activeIndexRef.current;
+    const isScrolling = isUserScrollingRef.current;
+    
+    const children = Array.from(container.children) as HTMLElement[];
+    const childrenStates = children.map((child, i) => {
+        const rect = child.getBoundingClientRect();
+        const elementCenter = rect.top + rect.height / 2;
+        const distance = Math.abs(center - elementCenter);
+        return { child, distance, i };
+    });
+
+    childrenStates.forEach(({ child, distance, i }) => {
+        if (distance > containerRect.height) {
+            child.style.transform = `scale(0.9)`;
+            child.style.filter = `blur(0px)`; 
+            child.style.opacity = `0.1`; 
+            return;
+        }
+
+        let isActiveForce = (!isScrolling && i === activeIdx);
+
+        if (isActiveForce) {
+             child.style.transform = `scale(1)`;
+             child.style.filter = `blur(0px)`;
+             child.style.opacity = `1`;
+        } else {
+             let intensity = Math.min(distance / activeZone, 1);
+             intensity = Math.pow(intensity, 1.3);
+             const scale = 1 - (intensity * 0.15); 
+             const blur = (intensity * 4).toFixed(1); 
+             const opacity = (1 - (intensity * 0.7)).toFixed(2); 
+             child.style.transform = `scale(${scale})`;
+             child.style.filter = `blur(${blur}px)`;
+             child.style.opacity = opacity;
+        }
+    });
+  }, []);
+
+  useEffect(() => {
+    let frameId: number;
+    const loop = () => {
+        updateLyricVisuals();
+        frameId = requestAnimationFrame(loop);
+    };
+    loop();
+    return () => cancelAnimationFrame(frameId);
+  }, [updateLyricVisuals]);
+
+  const isAutoScrolling = useRef(false);
+  const userScrollTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+      if (!isUserScrollingRef.current && lyricsContainerRef.current && activeIndex !== -1) {
+          const el = lyricsContainerRef.current.children[activeIndex] as HTMLElement;
+          if (el) {
+              isAutoScrolling.current = true;
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+      }
+  }, [activeIndex]);
+
+  const handleLyricsScroll = () => {
+      if (isAutoScrolling.current) {
+          isAutoScrolling.current = false;
+          return;
+      }
+      isUserScrollingRef.current = true;
+      if (userScrollTimeout.current) clearTimeout(userScrollTimeout.current);
+      userScrollTimeout.current = setTimeout(() => {
+          isUserScrollingRef.current = false;
+      }, 2500);
+  };
+
+  // --- 背景层 ---
+  const backgroundLayer = useMemo(() => (
+    <>
+      <div className="fixed inset-0 -z-50 bg-[#050505] overflow-hidden">
+         <div className="absolute inset-0 bg-black/40 z-0" />
+         <div className="absolute inset-0 transition-opacity duration-[1500ms]" style={{ opacity: isDarkMode ? 0.6 : 0.8 }}>
+             <div 
+                 className="absolute top-[-10%] left-[-10%] w-[70vw] h-[70vw] rounded-full mix-blend-screen filter blur-[80px] md:blur-[120px] animate-blob opacity-70 transition-colors duration-[2000ms]"
+                 style={{ backgroundColor: bgPalette.c1 }}
+             />
+             <div 
+                 className="absolute top-[10%] right-[-10%] w-[60vw] h-[60vw] rounded-full mix-blend-screen filter blur-[80px] md:blur-[120px] animate-blob animation-delay-2000 opacity-60 transition-colors duration-[2000ms]"
+                 style={{ backgroundColor: bgPalette.c2 }}
+             />
+             <div 
+                 className="absolute -bottom-[20%] -left-[20%] w-[80vw] h-[80vw] rounded-full mix-blend-screen filter blur-[80px] md:blur-[120px] animate-blob animation-delay-4000 opacity-60 transition-colors duration-[2000ms]"
+                 style={{ backgroundColor: bgPalette.c3 }}
+             />
+              <div 
+                 className="absolute top-[20%] left-[20%] w-[50vw] h-[50vw] rounded-full mix-blend-overlay filter blur-[60px] md:blur-[100px] animate-rotate-scale opacity-40 transition-colors duration-[2000ms]"
+                 style={{ backgroundColor: bgPalette.c1 }}
+             />
+         </div>
+         <div className="absolute inset-0 opacity-[0.03] pointer-events-none z-10" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }}></div>
+         {!isDarkMode && <div className="absolute inset-0 bg-white/30 backdrop-blur-[100px] z-10 mix-blend-overlay" />}
+      </div>
+    </>
+  ), [bgPalette, isDarkMode]);
+
   const layoutTransitionClass = "transition-[background-color,border-color,opacity,shadow] duration-500 ease-[cubic-bezier(0.2,0,0,1)]";
+  const lyricTransitionClass = "transition-colors duration-300 ease-out"; 
+  const textColor = isDarkMode ? 'text-white' : 'text-slate-900';
+  const textSubColor = isDarkMode ? 'text-white/50' : 'text-slate-500';
+  const lyricInactiveColor = isDarkMode ? 'text-white/40' : 'text-slate-400';
+  const drawerBg = isDarkMode ? 'bg-neutral-900/95' : 'bg-white/90';
+  const drawerBorder = isDarkMode ? 'border-white/5' : 'border-black/5';
+
+  // 搜索推荐层（二级菜单）
+  const queueOverlay = useMemo(() => {
+    let displayItems: any[] = [];
+    let emptySearch = false;
+
+    if (viewTab === 'artist') {
+        displayItems = artistSongs;
+    } else if (isSearching) {
+        if (searchType === 'playlist') {
+            displayItems = playlistSearchResults;
+            emptySearch = !isSearchLoading && playlistSearchResults.length === 0;
+        } else if (searchType === 'song') {
+            displayItems = songSearchResults;
+            emptySearch = !isSearchLoading && songSearchResults.length === 0;
+        } else if (searchType === 'artist') {
+            displayItems = artistSearchResults;
+            emptySearch = !isSearchLoading && artistSearchResults.length === 0;
+        }
+    } else {
+        displayItems = recommendations;
+        emptySearch = false;
+    }
+
+    const showSkeleton = (isSearchLoading || isArtistLoading) || (viewTab === 'recommend' && !isSearching && recommendations.length === 0);
+    const overlayBg = isDarkMode ? 'bg-[#0f0f10]/80' : 'bg-white/90';
+    const overlayBorder = isDarkMode ? 'border-white/10' : 'border-black/5';
+    const sectionBg = isDarkMode ? 'bg-black/20' : 'bg-black/[0.03]';
+    const pillBg = isDarkMode ? 'bg-black/30' : 'bg-black/[0.05]';
+    const inputBg = isDarkMode ? 'bg-black/20' : 'bg-black/[0.05]';
+    const itemHover = isDarkMode ? 'hover:bg-white/5' : 'hover:bg-black/[0.03]';
+    
+    // 浅色模式下用于次级信息的更清晰的不透明度
+    const subTextOpacity = isDarkMode ? 'opacity-40' : 'opacity-70';
+
+    return (
+      <div className={`fixed inset-0 z-[60] transition-opacity duration-500 flex items-center justify-center ${showQueue ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+          <div 
+            className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity duration-500" 
+            onClick={() => setShowQueue(false)} 
+          />
   
+          <div className={`relative w-full h-full md:inset-10 md:w-auto md:h-auto md:fixed md:rounded-2xl ${overlayBg} backdrop-blur-2xl border ${overlayBorder} flex flex-col overflow-hidden shadow-2xl transition-transform duration-500 md:max-w-6xl md:min-w-[80vw] ${showQueue ? 'scale-100 translate-y-0' : 'scale-95 translate-y-8'}`}>
+              
+              <div className={`flex-none p-4 md:p-6 border-b ${overlayBorder} flex flex-col md:flex-row gap-4 items-center justify-between ${sectionBg}`}>
+                   {isSearching || viewTab === 'artist' ? (
+                       <div className={`flex ${pillBg} p-1 rounded-lg self-start md:self-auto w-full md:w-auto overflow-x-auto no-scrollbar items-center shrink-0`}>
+                             <button 
+                                 onClick={() => {
+                                    if (viewTab === 'artist') {
+                                        if (isSearching) setViewTab('recommend');
+                                        else { setViewTab('queue'); setShowQueue(false); }
+                                    } else { clearSearch(); }
+                                 }}
+                                 className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 ${isDarkMode ? 'text-white/50 hover:text-white hover:bg-white/5' : 'text-slate-500 hover:text-slate-900 hover:bg-black/5'} transition-all shrink-0 border-r ${overlayBorder} mr-1`}
+                             >
+                                 <ArrowLeft className="w-4 h-4" />
+                             </button>
+                             {viewTab === 'artist' ? (
+                                <div className={`px-4 py-2 text-sm font-bold ${textColor} flex items-center gap-2`}>
+                                    <UserIcon className="w-4 h-4" /> 歌手详情
+                                </div>
+                             ) : (
+                                <>
+                                    <button 
+                                        onClick={() => handleTabChange('playlist')}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'playlist' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                    >
+                                        <Grid className="w-4 h-4" /> 歌单
+                                    </button>
+                                    <button 
+                                        onClick={() => handleTabChange('song')}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'song' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                    >
+                                        <Mic2 className="w-4 h-4" /> 单曲
+                                    </button>
+                                    <button 
+                                        onClick={() => handleTabChange('artist')}
+                                        className={`px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all shrink-0 border ${searchType === 'artist' ? (isDarkMode ? 'bg-white/10 text-white border-white/5 shadow-lg' : 'bg-black/[0.08] text-slate-900 border-black/5 shadow-sm') : 'border-transparent opacity-40 hover:opacity-100'}`}
+                                    >
+                                        <UserIcon className="w-4 h-4" /> 歌手
+                                    </button>
+                                </>
+                             )}
+                       </div>
+                   ) : (
+                      <div className={`relative flex ${pillBg} p-1 rounded-lg self-start md:self-auto w-full md:w-auto md:min-w-[340px] items-center isolate shrink-0`}>
+                            <div 
+                                className={`absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] ${isDarkMode ? 'bg-white/10 border-white/5 shadow-lg' : 'bg-black/[0.08] border-black/5 shadow-sm'} rounded-md transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] -z-10`}
+                                style={{ transform: viewTab === 'queue' ? 'translateX(100%)' : 'translateX(0%)' }}
+                            />
+                            <button 
+                                onClick={() => setViewTab('recommend')}
+                                className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'recommend' ? textColor : 'opacity-30 hover:opacity-60'}`}
+                            >
+                                <Grid className="w-4 h-4" /> 推荐歌单
+                            </button>
+                            <button 
+                                onClick={() => setViewTab('queue')}
+                                className={`flex-1 px-4 py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${viewTab === 'queue' ? textColor : 'opacity-30 hover:opacity-60'}`}
+                            >
+                                <ListMusic className="w-4 h-4" /> 当前播放 ({playlist.length})
+                            </button>
+                      </div>
+                   )}
+  
+                   <div className="flex w-full md:w-auto items-center justify-end">
+                       <form onSubmit={handleSearchSubmit} className="relative w-full md:w-80 group">
+                            <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${isDarkMode ? 'text-white/30 group-focus-within:text-white/70' : 'text-slate-400 group-focus-within:text-slate-900'}`} />
+                            <input 
+                                value={tempPlaylistId}
+                                onChange={(e) => setTempPlaylistId(e.target.value)}
+                                placeholder="搜索歌单、单曲或歌手..."
+                                className={`w-full ${inputBg} border ${overlayBorder} rounded-lg pl-10 pr-4 py-2.5 text-sm ${textColor} focus:outline-none focus:border-rose-500/50 transition-all placeholder:opacity-30`}
+                            />
+                            {tempPlaylistId && (
+                                <button type="button" onClick={() => setTempPlaylistId('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 opacity-30 hover:opacity-100">
+                                    <X className="w-3 h-3" />
+                                </button>
+                            )}
+                       </form>
+                   </div>
+              </div>
+  
+              <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth no-scrollbar">
+                  {viewTab === 'artist' ? (
+                       <div className="max-w-5xl mx-auto space-y-8 pb-20">
+                           {artistDetail && (
+                               <div className={`flex flex-col md:flex-row items-center md:items-end gap-6 md:gap-8 pb-4 border-b ${overlayBorder} animate-fade-in`}>
+                                   <div className={`w-32 h-32 md:w-48 md:h-48 rounded-full overflow-hidden shadow-2xl border-4 ${overlayBorder} shrink-0`}>
+                                       <img src={artistDetail.picUrl || artistDetail.cover} className="w-full h-full object-cover" />
+                                   </div>
+                                   <div className="flex-1 text-center md:text-left">
+                                       <h2 className={`text-3xl md:text-5xl font-bold ${textColor} mb-2`}>{artistDetail.name}</h2>
+                                       <p className={`${textSubColor} text-sm max-w-2xl line-clamp-2 md:line-clamp-3 mb-4`}>{artistDetail.briefDesc || '暂无简介'}</p>
+                                       <div className="flex items-center justify-center md:justify-start gap-4">
+                                           <div className={`relative flex ${isDarkMode ? 'bg-white/5' : 'bg-black/5'} rounded-lg p-1 isolate`}>
+                                                <div 
+                                                    className={`absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] ${isDarkMode ? 'bg-white/10 border-white/5 shadow-lg' : 'bg-white border-black/5 shadow-sm'} rounded-md transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] -z-10`}
+                                                    style={{ transform: artistSortOrder === 'time' ? 'translateX(100%)' : 'translateX(0%)' }}
+                                                />
+                                                <button 
+                                                    onClick={() => handleArtistSortChange('hot')}
+                                                    className={`w-28 px-4 py-1.5 rounded-md text-xs font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${artistSortOrder === 'hot' ? textColor : 'opacity-30 hover:opacity-60'}`}
+                                                >
+                                                    <Flame className="w-3 h-3" /> 最热歌曲
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleArtistSortChange('time')}
+                                                    className={`w-28 px-4 py-1.5 rounded-md text-xs font-bold flex items-center justify-center gap-2 transition-colors duration-300 ${artistSortOrder === 'time' ? textColor : 'opacity-30 hover:opacity-60'}`}
+                                                >
+                                                    <Calendar className="w-3 h-3" /> 最新发布
+                                                </button>
+                                           </div>
+                                       </div>
+                                   </div>
+                               </div>
+                           )}
+
+                           <div className="space-y-1">
+                                {isArtistLoading ? (
+                                     <div className="flex flex-col gap-4 animate-pulse">
+                                        {!artistDetail && <div className={`h-48 w-full ${isDarkMode ? 'bg-white/5' : 'bg-black/5'} rounded-2xl mb-8`}></div>}
+                                        {Array(8).fill(0).map((_, i) => (
+                                            <div key={i} className={`h-14 ${isDarkMode ? 'bg-white/5' : 'bg-black/5'} rounded-lg w-full`} />
+                                        ))}
+                                     </div>
+                                ) : artistSongs.length > 0 ? (
+                                    artistSongs.map((track, i) => (
+                                        <div 
+                                            key={track.id} 
+                                            onClick={() => handleArtistSongClick(track)}
+                                            className={`flex items-center gap-4 p-3 rounded-lg cursor-pointer group transition-all duration-300 ${itemHover} ${textSubColor} hover:${textColor} animate-fade-in-up`}
+                                            style={{ animationDelay: `${i * 30}ms` }}
+                                        >
+                                            <div className="w-8 text-center text-sm font-mono opacity-30">{i + 1}</div>
+                                            <div className="relative w-10 h-10 shrink-0">
+                                                <img src={track.al.picUrl || track.al.pic_str} loading="lazy" className="w-full h-full rounded-md object-cover shadow-sm" />
+                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center rounded-md transition-colors">
+                                                    <Play className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all fill-current" />
+                                                </div>
+                                            </div>
+                                            <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                                <div className={`text-sm font-medium truncate ${isDarkMode ? 'text-white/90' : 'text-slate-900'} flex items-center gap-2`}>
+                                                    {track.name}
+                                                    {(track.fee === 1 || track.fee === 4) && (
+                                                        <span className="text-[9px] px-1 rounded-[3px] border border-amber-500 text-amber-500 font-normal leading-tight opacity-90 scale-90 origin-left shrink-0">VIP</span>
+                                                    )}
+                                                </div>
+                                                <div className={`text-xs truncate ${subTextOpacity} group-hover:opacity-80`}>{track.al.name}</div>
+                                            </div>
+                                            <div className="text-xs font-mono opacity-20 w-12 text-right group-hover:opacity-50">
+                                                {Math.floor(track.dt / 1000 / 60)}:{(Math.floor(track.dt / 1000) % 60).toString().padStart(2, '0')}
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    !isArtistLoading && <div className="text-center py-20 opacity-40">该筛选下暂无歌曲</div>
+                                )}
+                           </div>
+                       </div>
+                  ) : viewTab === 'recommend' ? (
+                      <div className="pb-20">
+                          {isSearching && (
+                              <h3 className={`text-lg font-bold ${textColor} mb-6`}>
+                                  {isSearchLoading ? '正在搜索...' : `"${tempPlaylistId}" 的搜索结果`}
+                              </h3>
+                          )}
+                          {emptySearch ? (
+                              <div className="flex flex-col items-center justify-center opacity-40 py-20">
+                                  <Search className="w-12 h-12 mb-4" />
+                                  <p>未找到相关内容</p>
+                              </div>
+                          ) : (
+                            <>
+                                {(!isSearching || searchType === 'playlist') && (
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-8">
+                                        {showSkeleton ? (
+                                            Array(10).fill(0).map((_, i) => (
+                                                <div key={i} className="flex flex-col gap-3">
+                                                    <div className={`aspect-square rounded-xl ${isDarkMode ? 'bg-white/10' : 'bg-black/5'} animate-pulse`} />
+                                                    <div className={`h-4 ${isDarkMode ? 'bg-white/10' : 'bg-black/5'} rounded w-3/4 animate-pulse`} />
+                                                </div>
+                                            ))
+                                        ) : (
+                                            displayItems.map((list: any) => (
+                                                <div key={list.id} onClick={() => handleRecommendationClick(list.id)} className="group cursor-pointer flex flex-col gap-3">
+                                                    <div className={`aspect-square rounded-xl overflow-hidden relative shadow-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                                                        <img src={list.picUrl} className="w-full h-full object-cover transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-105" loading="lazy" />
+                                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-white/10 transition-colors duration-300" />
+                                                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                                                <div className={`w-12 h-12 ${isDarkMode ? 'bg-white/20 border-white/20' : 'bg-black/20 border-black/10'} backdrop-blur-md rounded-full flex items-center justify-center border shadow-xl transform scale-90 group-hover:scale-100 transition-transform`}>
+                                                                    <Play className="w-5 h-5 text-white fill-white ml-0.5" />
+                                                                </div>
+                                                        </div>
+                                                        <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-md px-2 py-1 rounded text-[10px] flex items-center gap-1 text-white/90 font-medium">
+                                                            <Play className="w-3 h-3 fill-current" /> {(list.playCount / 10000).toFixed(0)}万
+                                                        </div>
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <h3 className={`text-sm font-medium ${isDarkMode ? 'text-white/80' : 'text-slate-800'} line-clamp-2 leading-relaxed group-hover:${textColor} transition-colors`}>{list.name}</h3>
+                                                        {list.copywriter && <p className="text-xs opacity-40 mt-1 truncate">{list.copywriter}</p>}
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
+
+                                {isSearching && searchType === 'song' && (
+                                    <div className="space-y-1 max-w-4xl mx-auto">
+                                        {displayItems.map((track: any, i) => (
+                                            <div key={track.id} onClick={() => handleSongResultClick(track)} className={`flex items-center gap-4 p-3 rounded-lg cursor-pointer group transition-all duration-300 ${itemHover} ${textSubColor} hover:${textColor}`}>
+                                                <div className="relative w-12 h-12 shrink-0">
+                                                    <img src={track.al.picUrl || track.al.pic_str} loading="lazy" className="w-full h-full rounded-md object-cover shadow-sm" />
+                                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center rounded-md transition-colors">
+                                                        <Play className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all fill-current" />
+                                                    </div>
+                                                </div>
+                                                <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                                    <div className={`text-base font-medium truncate ${isDarkMode ? 'text-white/90' : 'text-slate-900'} flex items-center gap-2`}>
+                                                        {track.name}
+                                                        {(track.fee === 1 || track.fee === 4) && (
+                                                            <span className="text-[10px] px-1 rounded-[3px] border border-amber-500 text-amber-500 font-normal leading-tight opacity-90 scale-90 origin-left shrink-0">VIP</span>
+                                                        )}
+                                                    </div>
+                                                    <div className={`text-xs truncate ${subTextOpacity} group-hover:opacity-80`}>
+                                                        {Array.isArray(track.ar) ? track.ar.map((a:any) => a.name).join(', ') : 'Unknown'}
+                                                    </div>
+                                                </div>
+                                                <div className="text-xs font-mono opacity-20 w-12 text-right group-hover:opacity-50">
+                                                    {Math.floor(track.dt / 1000 / 60)}:{(Math.floor(track.dt / 1000) % 60).toString().padStart(2, '0')}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {isSearching && searchType === 'artist' && (
+                                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
+                                        {displayItems.map((artist: any) => (
+                                            <div key={artist.id} onClick={() => handleArtistResultClick(artist.id)} className="group cursor-pointer flex flex-col items-center gap-3">
+                                                <div className={`aspect-square w-full rounded-full overflow-hidden relative shadow-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                                                    <img src={artist.picUrl} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" loading="lazy" />
+                                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300 flex items-center justify-center">
+                                                         <UserIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all" />
+                                                    </div>
+                                                </div>
+                                                <div className="text-center">
+                                                    <h3 className={`text-sm font-medium ${isDarkMode ? 'text-white/80' : 'text-slate-800'} group-hover:${textColor} transition-colors`}>{artist.name}</h3>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </>
+                          )}
+                      </div>
+                  ) : (
+                      <div className="space-y-1 pb-20 max-w-4xl mx-auto">
+                          {playlist.map((track, i) => (
+                              <div 
+                                  key={track.id} 
+                                  onClick={() => { setCurrentIndex(i); setIsPlaying(true); }}
+                                  className={`flex items-center gap-4 p-3 rounded-lg cursor-pointer group transition-all duration-300 ${
+                                      i === currentIndex 
+                                          ? (isDarkMode ? 'bg-white/10 text-white' : 'bg-black/[0.08] text-slate-900') 
+                                          : `${isDarkMode ? 'text-white/60' : 'text-slate-600'} ${itemHover} hover:${textColor}`
+                                  }`}
+                              >
+                                  <div className="relative w-12 h-12 shrink-0">
+                                    <img src={track.al.picUrl} loading="lazy" className="w-full h-full rounded-md object-cover shadow-sm" />
+                                    {i === currentIndex && (
+                                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center rounded-md backdrop-blur-[1px]">
+                                            <div className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
+                                        </div>
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                      <div className={`text-base font-medium truncate flex items-center gap-2 ${i === currentIndex ? textColor : (isDarkMode ? 'text-white/90' : 'text-slate-800')}`}>
+                                          {track.name}
+                                          {(track.fee === 1 || track.fee === 4) && (
+                                              <span className="text-[10px] px-1 rounded-[3px] border border-amber-500 text-amber-500 font-normal leading-tight opacity-90 scale-90 origin-left shrink-0">VIP</span>
+                                          )}
+                                      </div>
+                                      <div className={`text-xs truncate ${subTextOpacity} group-hover:opacity-80`}>{track.ar.map(a => a.name).join(', ')}</div>
+                                  </div>
+                                  <div className="text-xs font-mono opacity-20 w-12 text-right group-hover:opacity-50">
+                                      {Math.floor(track.dt / 1000 / 60)}:{(Math.floor(track.dt / 1000) % 60).toString().padStart(2, '0')}
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+              </div>
+  
+          </div>
+      </div>
+    );
+  }, [showQueue, viewTab, recommendations, playlistSearchResults, songSearchResults, artistSearchResults, isSearching, searchType, isSearchLoading, isArtistLoading, artistDetail, artistSongs, artistSortOrder, playlist, currentIndex, tempPlaylistId, isPlaying, isDarkMode, textColor, textSubColor]);
+
+  const commentsDrawer = useMemo(() => (
+      <>
+        <div 
+            className={`fixed inset-0 z-[55] bg-black/20 backdrop-blur-[1px] transition-opacity duration-500 ${showComments ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            onClick={() => setShowComments(false)}
+        />
+        <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] backdrop-blur-3xl border-l shadow-2xl z-[60] transform transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${showComments ? 'translate-x-0' : 'translate-x-full'} ${drawerBg} ${drawerBorder} ${textColor} ${layoutTransitionClass}`}>
+                <div className="flex flex-col h-full">
+                    <div className={`p-6 pt-8 border-b flex items-center justify-between ${layoutTransitionClass} ${isDarkMode ? 'border-white/5' : 'border-black/5'}`}>
+                        <h2 className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5" /> 精选评论</h2>
+                        <div className="flex items-center gap-2">
+                            <button 
+                                onClick={handleRefreshComments} 
+                                className={`p-2 rounded-full ${layoutTransitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}
+                                title="刷新评论"
+                            >
+                                <RefreshCw className={`w-4 h-4 ${isRefreshingComments ? 'animate-spin' : ''}`} />
+                            </button>
+                            <button onClick={() => setShowComments(false)} className={`p-2 rounded-full ${layoutTransitionClass} ${isDarkMode ? 'bg-white/5 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}>
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                        {comments.length > 0 ? comments.map(c => (
+                            <div key={c.commentId} className="flex gap-4 group">
+                                <img src={c.user.avatarUrl} loading="lazy" className={`w-10 h-10 rounded-full border shadow-sm ${layoutTransitionClass} ${isDarkMode ? 'border-white/10' : 'border-black/10'}`} />
+                                <div className="flex-1">
+                                    <div className="flex justify-between items-baseline mb-1">
+                                        <span className="text-sm font-semibold opacity-90">{c.user.nickname}</span>
+                                        <span className="text-xs opacity-30">{new Date(c.time).toLocaleDateString()}</span>
+                                    </div>
+                                    <p className="text-base opacity-90 leading-relaxed font-normal">{c.content}</p>
+                                    <div className="flex items-center gap-1 mt-2 text-xs opacity-30 group-hover:opacity-50 transition-opacity">
+                                        <Heart className="w-3 h-3" /> {c.likedCount}
+                                    </div>
+                                </div>
+                            </div>
+                        )) : (
+                            <div className="text-center opacity-30 mt-20">暂无评论</div>
+                        )}
+                    </div>
+                </div>
+        </div>
+      </>
+  ), [showComments, comments, isDarkMode, drawerBg, drawerBorder, textColor, isRefreshingComments, handleRefreshComments]);
+
+  const AlbumArt = useMemo(() => (
+    <div className={`flex-1 flex items-center justify-center p-8 lg:p-12 relative min-h-0 min-w-0 ${layoutTransitionClass}`}>
+        <div key={currentTrack?.id} className={`relative aspect-square w-full max-w-[280px] lg:max-w-[550px] transition-transform duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] animate-smooth-appear ${isPlaying ? 'scale-100' : 'scale-[0.8]'}`}>
+            <div 
+                className={`absolute inset-0 rounded-xl blur-3xl scale-110 -z-10 transition-colors duration-[2000ms] ${layoutTransitionClass}`} 
+                style={{ background: `rgb(${dominantColor})`, opacity: isDarkMode ? 0.6 : 0.3 }}
+            />
+            {currentTrack?.al.picUrl && (
+                <img 
+                    src={currentTrack.al.picUrl} 
+                    loading="eager"
+                    fetchPriority="high"
+                    decoding="async"
+                    className={`w-full h-full object-cover rounded-xl relative z-20 ${layoutTransitionClass} 
+                        ${isDarkMode 
+                            ? 'shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/5' 
+                            : 'shadow-[0_20px_40px_rgba(0,0,0,0.2)] border border-black/5 ring-1 ring-black/5'
+                        }`}
+                />
+            )}
+        </div>
+    </div>
+  ), [currentTrack?.al.picUrl, currentTrack?.id, isPlaying, dominantColor, isDarkMode]);
+
   if (isLoading) {
       return <div className={`h-screen w-screen flex items-center justify-center ${isDarkMode ? 'bg-black text-white' : 'bg-[#f5f5f7] text-black'}`}><Loader2 className="animate-spin w-10 h-10" /></div>;
   }
@@ -557,7 +1102,7 @@ const App: React.FC = () => {
         preload="auto"
       />
 
-      <BackgroundLayer bgPalette={bgPalette} isDarkMode={isDarkMode} />
+      {backgroundLayer}
 
       {playError && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2 animate-bounce">
@@ -567,75 +1112,99 @@ const App: React.FC = () => {
       
       <div className={`flex-1 flex flex-col lg:flex-row relative z-10 overflow-hidden min-h-0 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] transform-gpu ${showQueue ? 'scale-95 opacity-40 blur-sm grayscale-[0.5]' : 'scale-100 opacity-100 blur-0 grayscale-0'}`}>
         
-        <AlbumArt 
-            currentTrack={currentTrack} 
-            isPlaying={isPlaying} 
-            dominantColor={dominantColor} 
-            isDarkMode={isDarkMode} 
-            layoutTransitionClass={layoutTransitionClass}
-        />
+        {AlbumArt}
 
-        <LyricsView 
-            lyrics={lyrics}
-            currentTime={currentTime}
-            activeIndex={activeIndex}
-            handleSeek={handleSeek}
-            isDarkMode={isDarkMode}
-            currentTrack={currentTrack}
-        />
+        <div className="flex-1 h-full relative overflow-hidden lg:mr-8 flex flex-col min-h-0">
+            <div 
+                ref={lyricsContainerRef}
+                onScroll={handleLyricsScroll}
+                className="flex-1 overflow-y-auto no-scrollbar py-[50vh] px-8 lg:px-4 text-left lyric-mask will-change-transform"
+            >
+                {lyrics.length > 0 ? lyrics.map((line, i) => {
+                    const isActive = i === activeIndex;
+                    const textClass = isActive 
+                        ? "font-extrabold text-3xl lg:text-5xl drop-shadow-sm" 
+                        : `font-bold text-lg lg:text-2xl ${lyricInactiveColor}`;
+
+                    const renderActiveContent = () => {
+                        const progress = currentTime < line.time ? 0 : 
+                                         currentTime > line.time + line.duration ? 1 : 
+                                         (currentTime - line.time) / line.duration;
+                        
+                        const chars = line.text.split('');
+                        const totalChars = chars.length;
+                        const activeCharIndex = Math.floor(progress * totalChars);
+                        const subProgress = (progress * totalChars) % 1; 
+
+                        return (
+                            <span className={`inline-block w-full break-words leading-snug tracking-tight py-2 ${textClass} ${lyricTransitionClass}`}>
+                                {chars.map((char, charIdx) => {
+                                    if (charIdx < activeCharIndex) {
+                                        return <span key={charIdx} className={isDarkMode ? 'text-white' : 'text-black'}>{char}</span>;
+                                    } else if (charIdx > activeCharIndex) {
+                                        return <span key={charIdx} className={isDarkMode ? 'text-white/30' : 'text-black/30'}>{char}</span>;
+                                    } else {
+                                        const p = subProgress * 100;
+                                        const activeColor = isDarkMode ? '#ffffff' : '#000000';
+                                        const dimColor = isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
+                                        return (
+                                            <span 
+                                                key={charIdx} 
+                                                style={{
+                                                    backgroundImage: `linear-gradient(90deg, ${activeColor} ${p}%, ${dimColor} ${p}%)`,
+                                                    WebkitBackgroundClip: 'text',
+                                                    WebkitTextFillColor: 'transparent',
+                                                    backgroundClip: 'text',
+                                                    color: 'transparent'
+                                                }}
+                                            >
+                                                {char}
+                                            </span>
+                                        );
+                                    }
+                                })}
+                            </span>
+                        );
+                    };
+
+                    return (
+                        <div 
+                            key={i} 
+                            className={`origin-left cursor-pointer active:scale-95 hover:opacity-80 group w-full ${line.isContinuation ? "mt-5" : "mt-12"} ${lyricTransitionClass}`}
+                            onClick={() => handleSeek(line.time)}
+                        >
+                            {isActive ? renderActiveContent() : (
+                                <span className={`inline-block leading-snug tracking-tight py-2 break-words text-balance ${textClass} ${lyricTransitionClass}`}>
+                                    {line.text}
+                                </span>
+                            )}
+                            
+                            {line.trans && (
+                                <p 
+                                    className={`font-medium mt-3 leading-normal ${lyricTransitionClass} ${
+                                        isActive 
+                                            ? (isDarkMode ? 'text-white/60' : 'text-black/60') 
+                                            : (isDarkMode ? 'text-white/30' : 'text-black/30')
+                                    } ${isActive ? 'text-lg lg:text-2xl' : 'text-sm lg:text-lg'}`} 
+                                >
+                                    {line.trans}
+                                </p>
+                            )}
+                        </div>
+                    )
+                }) : (
+                    <div className="flex items-center justify-center h-full">
+                        <span className={`text-2xl font-bold flex items-center gap-3 animate-pulse transition-colors duration-300 ${isDarkMode ? 'text-white/30' : 'text-black/20'}`}>
+                            <Disc className="animate-spin-slow" /> 纯音乐 / 暂无歌词
+                        </span>
+                    </div>
+                )}
+            </div>
+        </div>
       </div>
 
-      {/* Overlay - Queue / Search / Recommendations / Artist */}
-      <QueueDrawer 
-        showQueue={showQueue}
-        setShowQueue={setShowQueue}
-        viewTab={viewTab}
-        setViewTab={setViewTab}
-        isSearching={isSearching}
-        searchType={searchType}
-        handleTabChange={handleTabChange}
-        clearSearch={clearSearch}
-        tempPlaylistId={tempPlaylistId}
-        setTempPlaylistId={setTempPlaylistId}
-        handleSearchSubmit={handleSearchSubmit}
-        handleFileUpload={handleFileUpload}
-        
-        recommendations={recommendations}
-        playlistSearchResults={playlistSearchResults}
-        songSearchResults={songSearchResults}
-        artistSearchResults={artistSearchResults}
-        
-        isSearchLoading={isSearchLoading}
-        isArtistLoading={isArtistLoading}
-        
-        artistDetail={artistDetail}
-        artistSongs={artistSongs}
-        artistSortOrder={artistSortOrder}
-        handleArtistSortChange={handleArtistSortChange}
-        
-        handleSongResultClick={handleSongResultClick}
-        handleArtistResultClick={handleArtistResultClick}
-        handleRecommendationClick={handleRecommendationClick}
-        handleArtistSongClick={handleArtistSongClick}
-        
-        playlist={playlist}
-        currentIndex={currentIndex}
-        setCurrentIndex={setCurrentIndex}
-        setIsPlaying={setIsPlaying}
-        
-        isDarkMode={isDarkMode}
-      />
-
-      {/* Comments Drawer */}
-      <CommentsDrawer 
-        showComments={showComments}
-        setShowComments={setShowComments}
-        comments={comments}
-        isRefreshingComments={isRefreshingComments}
-        handleRefreshComments={handleRefreshComments}
-        isDarkMode={isDarkMode}
-        layoutTransitionClass={layoutTransitionClass}
-      />
+      {queueOverlay}
+      {commentsDrawer}
 
       <MusicPlayer 
         currentTrack={currentTrack}
@@ -651,7 +1220,7 @@ const App: React.FC = () => {
         onToggleQueue={handleToggleQueue}
         onToggleComments={handleToggleComments}
         themeMode={themeMode}
-        onToggleTheme={toggleTheme}
+        onToggleTheme={handleToggleTheme}
         isDarkMode={isDarkMode}
         isShuffle={isShuffle}
         onToggleShuffle={handleToggleShuffle}

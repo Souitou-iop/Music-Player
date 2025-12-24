@@ -20,7 +20,6 @@ export interface Track {
   al: Album;
   dt: number; // Duration in ms
   fee?: number; // 0: Free, 1: VIP, 4: Paid Album, 8: Sq
-  sourceUrl?: string; // URL for local file playback
 }
 
 export interface LyricLine {
